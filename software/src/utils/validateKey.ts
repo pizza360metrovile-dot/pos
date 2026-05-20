@@ -82,7 +82,7 @@ export async function validateLicenseKey(rawKey: string): Promise<ValidationResu
       const decodedUpper = atob(payloadPartUpper);
       payload = JSON.parse(decodedUpper);
     } catch (err2) {
-      return { valid: false, reason: "Invalid key encoding (failed to parse payload)" };
+      return { valid: false, reason: "Invalid key" };
     }
   }
 
