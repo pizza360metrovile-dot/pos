@@ -142,7 +142,7 @@ export interface StockLog {
 
 export interface ModifierGroup {
   id: string | number;
-  categoryId: string | number;
+  menuItemId: string | number;
   name: string;
   type: 'option' | 'addon';
   isRequired: boolean;

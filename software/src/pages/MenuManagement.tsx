@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, Edit2, Trash2, Tag, Utensils, X, Save, AlertCircle, 
-  ChefHat, Package, LayoutGrid, ListChecks, GripVertical, Settings2 
+  ChefHat, Package, LayoutGrid, ListChecks, GripVertical, Settings2,
+  ChevronDown, ChevronRight
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
 import { MenuItem, Category, ModifierGroup, ModifierOption } from '../types';
@@ -23,11 +24,23 @@ export default function MenuManagement() {
   } = useStore();
   
   const [activeTab, setActiveTab] = useState<'items' | 'categories' | 'modifiers'>('items');
-  const [selectedModCategory, setSelectedModCategory] = useState<string>(categories[0]?.id || '');
+  const [selectedModItemId, setSelectedModItemId] = useState<string>('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
 
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isModifierModalOpen, setIsModifierModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (isItemModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isItemModalOpen]);
 
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -59,7 +72,9 @@ export default function MenuManagement() {
     { label: '', price: 0 }
   ]);
 
-  const selectedCategory = categories.find(c => String(c.id) === String(activeTab === 'modifiers' ? selectedModCategory : formData.categoryId));
+  const selectedCategory = categories.find(c => String(c.id) === String(formData.categoryId));
+  const activeItemId = selectedModItemId || menuItems[0]?.id || '';
+  const selectedItem = menuItems.find(item => String(item.id) === String(activeItemId));
 
   const handleOpenItemModal = (item?: MenuItem) => {
     if (item) {
@@ -180,11 +195,11 @@ export default function MenuManagement() {
     const groupId = editingModifierGroup?.id || crypto.randomUUID();
     const group: ModifierGroup = {
       id: groupId,
-      categoryId: selectedModCategory,
+      menuItemId: activeItemId,
       name: modGroupName,
       type: modGroupType,
       isRequired: modGroupType === 'option' ? modGroupRequired : false,
-      sortOrder: editingModifierGroup?.sortOrder || (modifierGroups.filter(g => String(g.categoryId) === String(selectedModCategory)).length + 1)
+      sortOrder: editingModifierGroup?.sortOrder || (modifierGroups.filter(g => String(g.menuItemId) === String(activeItemId)).length + 1)
     };
 
     const options: ModifierOption[] = validOptions.map((opt, index) => ({
@@ -226,10 +241,10 @@ export default function MenuManagement() {
   };
 
   const handleDeleteModGroup = async (group: ModifierGroup) => {
-    const categoryName = categories.find(c => String(c.id) === String(group.categoryId))?.name || '';
+    const menuItemName = menuItems.find(mi => String(mi.id) === String(group.menuItemId))?.name || '';
     const confirmed = await showConfirmModal({
       title: 'Delete Modifier Group',
-      message: `Delete ${group.name}? This modifier will no longer appear when ordering items in ${categoryName}.`,
+      message: `Delete ${group.name}? This modifier will no longer appear when ordering ${menuItemName ? `"${menuItemName}"` : 'this item'}.`,
       confirmLabel: 'Delete Modifier Group',
       cancelLabel: 'Cancel',
       isDanger: true
@@ -317,9 +332,9 @@ export default function MenuManagement() {
                   <thead>
                     <tr>
                       <th className="px-8 py-5 text-center w-16">#</th>
-                      <th className="px-8 py-5">Nomenclature</th>
-                      <th className="px-8 py-5">Classification</th>
-                      <th className="px-8 py-5">Valuation</th>
+                      <th className="px-8 py-5">Item Name</th>
+                      <th className="px-8 py-5">Category</th>
+                      <th className="px-8 py-5">Price</th>
                       <th className="px-8 py-5">Inventory</th>
                       <th className="px-8 py-5">Status</th>
                       <th className="px-8 py-5 text-right">Actions</th>
@@ -467,43 +482,88 @@ export default function MenuManagement() {
             exit={{ opacity: 0, y: -10 }}
             className="flex gap-8 h-[calc(100vh-280px)]"
           >
-            {/* Left Sidebar - Category Selector */}
+            {/* Left Sidebar - Menu Item Selector List */}
             <div className="w-80 bg-bg-surface border border-border-light rounded-xl p-6 space-y-4 overflow-y-auto shadow-sm">
-               <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 mb-6 leading-none">Catalog Structure</h3>
-               {categories.map(cat => {
-                 const groupCount = modifierGroups.filter(g => String(g.categoryId) === String(cat.id)).length;
-                 return (
-                    <button 
-                      key={cat.id}
-                      onClick={() => setSelectedModCategory(String(cat.id))}
-                      className={clsx(
-                        "w-full flex items-center justify-between p-4 rounded-xl transition-all group",
-                        String(selectedModCategory) === String(cat.id) ? "bg-bg-surface-2 border border-accent shadow-sm" : "hover:bg-bg-surface-2 text-text-secondary"
-                      )}
-                    >
-                      <span className={clsx("font-bold text-[13px] tracking-tight uppercase", String(selectedModCategory) === String(cat.id) ? "text-accent" : "text-text-secondary")}>{cat.name}</span>
-                      <span className={clsx(
-                        "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border",
-                        String(selectedModCategory) === String(cat.id) ? "bg-accent-light text-accent border-accent-border" : "bg-bg-surface-2 text-text-muted border-border-light"
-                      )}>
-                        {groupCount} groups
-                      </span>
-                    </button>
-                 );
-               })}
+               <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 mb-4 leading-none">Catalog Structure</h3>
+               <div className="space-y-3">
+                 {categories.map(cat => {
+                   const isCollapsed = collapsedCategories[cat.id];
+                   const catItems = menuItems.filter(i => String(i.categoryId) === String(cat.id));
+                   
+                   return (
+                     <div key={cat.id} className="space-y-1">
+                       <button 
+                         type="button"
+                         onClick={() => {
+                           setCollapsedCategories(prev => ({
+                             ...prev,
+                             [cat.id]: !prev[cat.id]
+                           }));
+                         }}
+                         className="w-full flex items-center gap-1.5 p-2 hover:bg-bg-surface-2 rounded-lg text-left text-text-secondary transition-all"
+                       >
+                         <span className="text-text-muted shrink-0">
+                           {isCollapsed ? (
+                             <ChevronRight className="w-4 h-4" />
+                           ) : (
+                             <ChevronDown className="w-4 h-4" />
+                           )}
+                         </span>
+                         <span className="font-extrabold text-[12px] tracking-wider uppercase text-text-secondary truncate">
+                           {cat.name}
+                         </span>
+                       </button>
+
+                       {!isCollapsed && (
+                         <div className="pl-4 space-y-1 border-l border-border-light ml-3.5 pt-0.5 pb-1.5">
+                           {catItems.length === 0 ? (
+                             <span className="block text-[11px] text-text-placeholder italic pl-2.5 py-1">No items in this category</span>
+                           ) : (
+                             catItems.map(item => {
+                               const groupCount = modifierGroups.filter(g => String(g.menuItemId) === String(item.id)).length;
+                               const isAct = String(activeItemId) === String(item.id);
+                               return (
+                                 <button 
+                                   type="button"
+                                   key={item.id}
+                                   onClick={() => setSelectedModItemId(String(item.id))}
+                                   className={clsx(
+                                     "w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all text-left",
+                                     isAct ? "bg-bg-surface-2 border border-accent/40 shadow-sm text-accent font-bold" : "hover:bg-bg-surface-2/60 text-text-secondary"
+                                   )}
+                                 >
+                                   <span className={clsx("font-semibold text-xs truncate max-w-[140px]", isAct ? "text-accent" : "text-text-secondary")}>
+                                     {item.name}
+                                   </span>
+                                   <span className={clsx(
+                                     "text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-wider border",
+                                     isAct ? "bg-accent-light text-accent border-accent-border/60" : "bg-bg-surface-2 text-text-muted border-border-light"
+                                   )}>
+                                     {groupCount}G
+                                   </span>
+                                 </button>
+                               );
+                             })
+                           )}
+                         </div>
+                       )}
+                     </div>
+                   );
+                 })}
+               </div>
             </div>
 
             {/* Right Side - Modifier Groups */}
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto pr-4 custom-scrollbar scroll-smooth">
-               <div className="flex justify-between items-center card-main p-8 shadow-sm border-border-light sticky top-0 z-10">
+               <div className="flex justify-between items-center card-main p-8 shadow-sm border-border-light sticky top-0 z-10 animate-fade-in">
                   <div>
                     <h2 className="text-lg font-bold text-text-primary uppercase tracking-tight">
-                      {selectedCategory?.name || 'Category'} Modifiers
+                      {selectedItem ? `"${selectedItem.name}"` : 'Item'} Modifiers
                     </h2>
-                    <p className="text-text-muted text-[13px] font-medium mt-1">Define complex choices and add-ons for items in this category.</p>
+                    <p className="text-text-muted text-[13px] font-medium mt-1">Define complex choices and add-ons for this specific menu item.</p>
                   </div>
                   <button 
-                    disabled={!selectedModCategory}
+                    disabled={!selectedItem}
                     onClick={() => handleOpenModifierModal()}
                     className="btn-primary"
                   >
@@ -512,13 +572,13 @@ export default function MenuManagement() {
                   </button>
                </div>
 
-               {modifierGroups.filter(g => String(g.categoryId) === String(selectedModCategory)).length > 0 ? (
+               {selectedItem && modifierGroups.filter(g => String(g.menuItemId) === String(activeItemId)).length > 0 ? (
                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 pb-8">
                     {modifierGroups
-                      .filter(g => String(g.categoryId) === String(selectedModCategory))
+                      .filter(g => String(g.menuItemId) === String(activeItemId))
                       .sort((a, b) => a.sortOrder - b.sortOrder)
                       .map(group => (
-                        <div key={group.id} className="card-main p-8 group hover:shadow-md transition-all relative overflow-hidden">
+                        <div key={group.id} className="card-main p-8 group hover:shadow-md transition-all relative overflow-hidden animate-fade-in">
                            <div className="flex justify-between items-start mb-6 border-b border-border-light pb-6 relative z-10">
                               <div className="flex items-center gap-4">
                                 <div className="p-3 bg-bg-surface-2 border border-border-light rounded-lg text-text-placeholder cursor-move">
@@ -566,12 +626,12 @@ export default function MenuManagement() {
                       ))}
                  </div>
                ) : (
-                 <div className="flex-1 flex flex-col items-center justify-center card-main border-dashed p-12 py-32">
+                 <div className="flex-1 flex flex-col items-center justify-center card-main border-dashed p-12 py-32 animate-fade-in">
                     <div className="w-20 h-20 bg-bg-surface-2 rounded-full flex items-center justify-center mb-6">
                       <ListChecks className="w-8 h-8 text-text-disabled" />
                     </div>
                     <p className="text-[11px] font-bold text-text-disabled uppercase tracking-[0.3em] text-center max-w-xs leading-loose">
-                      No modifiers yet for this category.<br/>
+                      No modifiers yet for this item.<br/>
                       Add a group to start customizing orders.
                     </p>
                  </div>
@@ -583,136 +643,179 @@ export default function MenuManagement() {
 
       {/* Item Modal */}
       {isItemModalOpen && (activeTab === 'items') && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-[2px] animate-fade-in">
-          <div className="bg-bg-surface border border-border-light w-full max-w-xl rounded-xl shadow-modal overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="px-8 py-5 border-b border-border-light flex justify-between items-center bg-bg-surface">
-              <h2 className="font-bold text-[17px] tracking-tight uppercase text-text-primary">{editingItem ? 'Refine Item' : 'New Catalog Entry'}</h2>
-              <button onClick={() => setIsItemModalOpen(false)} className="text-text-muted hover:text-text-primary p-2 bg-bg-surface-2 rounded-full transition-all">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-5 bg-gray-900/60 backdrop-blur-[2px] overflow-y-auto animate-fade-in">
+          <div 
+            className="bg-bg-surface border border-border-light rounded-xl shadow-modal overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col" 
+            style={{ width: 'min(860px, 92vw)', maxHeight: '90vh' }}
+          >
+            <div className="px-8 py-5 border-b border-border-light flex justify-between items-center bg-bg-surface shrink-0">
+              <h2 className="font-bold text-[17px] tracking-tight uppercase text-text-primary">
+                {editingItem ? 'Edit Item' : 'Add Item'}
+              </h2>
+              <button 
+                type="button"
+                onClick={() => setIsItemModalOpen(false)} 
+                className="text-text-muted hover:text-text-primary p-2 bg-bg-surface-2 rounded-full transition-all"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSaveItem} className="p-8 space-y-6">
-              <div className="grid grid-cols-2 gap-6">
-                <div className="col-span-2">
-                  <label className="input-label">Display Nomenclature</label>
+            
+            <form onSubmit={handleSaveItem} className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-8 space-y-6 overflow-y-auto flex-1">
+                {/* Item Name - Large and Prominent spanning full width */}
+                <div>
+                  <label className="input-label font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Item Name</label>
                   <input
                     required
                     type="text"
-                    value={formData.name}
+                    value={formData.name || ''}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="input-field"
+                    className="input-field text-base font-medium py-3"
                     placeholder="E.g. Signature Truffle Fries"
                   />
                 </div>
-                <div>
-                  <label className="input-label">Valuation ({settings.currency})</label>
-                  <input
-                    required
-                    type="number"
-                    step="0.01"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
-                    className="input-field font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="input-label">Categorization</label>
-                  <select
-                    value={formData.categoryId}
-                    onChange={(e) => {
-                      const catId = isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value);
-                      const cat = categories.find(c => String(c.id) === String(catId));
-                      const newData = { ...formData, categoryId: catId };
-                      if (cat?.type === 'prepared') {
-                        newData.stock = 0;
-                        newData.minStock = 0;
-                      }
-                      setFormData(newData);
-                    }}
-                    className="input-field appearance-none"
-                  >
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              <div className="bg-bg-surface-2 rounded-lg p-5 border border-border-light">
-                {selectedCategory?.type === 'prepared' ? (
-                   <div className="flex items-start gap-3">
-                     <ChefHat className="w-5 h-5 shrink-0 text-accent" />
-                     <p className="text-[11px] text-accent font-bold uppercase leading-relaxed tracking-wider">
-                       Prepared workflow: Stock is calculated via sub-assemblies and raw inventory.
-                     </p>
-                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-start gap-3 mb-4">
-                      <Package className="w-5 h-5 shrink-0 text-success" />
-                      <p className="text-[11px] text-success font-bold uppercase leading-relaxed tracking-wider">
-                        Discrete tracking: Inventory decrements by unit upon sale.
-                      </p>
+
+                {/* TWO COLUMNS */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                  
+                  {/* LEFT COLUMN */}
+                  <div className="space-y-5">
+                    <div>
+                      <label className="input-label font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Price ({settings.currency})</label>
+                      <input
+                        required
+                        type="number"
+                        step="0.01"
+                        value={formData.price || 0}
+                        onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
+                        className="input-field font-mono"
+                      />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="input-label">Floor Limit</label>
-                        <input
-                          required
-                          type="number"
-                          min="0"
-                          value={formData.minStock}
-                          onChange={(e) => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
-                          className="input-field font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="input-label">Initial Reserve</label>
-                        <input
-                          required
-                          type="number"
-                          min="0"
-                          value={formData.stock}
-                          onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
-                          className="input-field font-mono"
-                        />
+
+                    <div>
+                      <label className="input-label font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Category</label>
+                      <select
+                        value={formData.categoryId || ''}
+                        onChange={(e) => {
+                          const catId = isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value);
+                          const cat = categories.find(c => String(c.id) === String(catId));
+                          const newData = { ...formData, categoryId: catId };
+                          if (cat?.type === 'prepared') {
+                            newData.stock = 0;
+                            newData.minStock = 0;
+                          }
+                          setFormData(newData);
+                        }}
+                        className="input-field appearance-none"
+                      >
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="input-label mb-2 block font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Active</label>
+                      <div className="flex items-center justify-between p-3.5 bg-bg-surface-2/65 rounded-lg border border-border-light h-12">
+                        <div className="flex items-center gap-3">
+                          <div className={clsx("w-3 h-3 rounded-full", formData.isActive ? "bg-success" : "bg-text-disabled")} />
+                          <span className="text-xs font-bold uppercase tracking-wider text-text-secondary select-none">Active</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, isActive: !formData.isActive })}
+                          className={clsx(
+                            "w-10 h-5.5 rounded-full p-1 transition-all flex items-center shrink-0",
+                            formData.isActive ? "bg-success justify-end" : "bg-text-disabled justify-start"
+                          )}
+                        >
+                          <div className="w-3.5 h-3.5 bg-white rounded-full shadow-sm" />
+                        </button>
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="input-label">Catalog Descriptor</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="input-field resize-none h-24"
-                  placeholder="Summarize ingredients or preparation style..."
-                />
-              </div>
+                  {/* RIGHT COLUMN */}
+                  <div className="space-y-4 border-l-0 md:border-l md:border-border-light/40 md:pl-6">
+                    {selectedCategory?.type === 'prepared' ? (
+                      <div className="bg-bg-surface-2/40 rounded-lg p-4 border border-border-light flex items-start gap-2.5">
+                        <ChefHat className="w-5 h-5 shrink-0 text-accent animate-pulse" />
+                        <p className="text-[11px] text-accent font-black uppercase leading-relaxed tracking-wider">
+                          Prepared workflow: Stock is calculated via sub-assemblies and raw inventory.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-bg-surface-2/40 rounded-lg p-4 border border-border-light space-y-3.5">
+                        <div className="flex items-start gap-2.5">
+                          <Package className="w-5 h-5 shrink-0 text-success" />
+                          <p className="text-[11px] text-success font-bold uppercase leading-relaxed tracking-wider">
+                            Track Stock (decrements on each sale)
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3.5">
+                          <div>
+                            <label className="input-label select-none font-bold uppercase text-[11px] tracking-wider text-text-muted">Min Stock Alert</label>
+                            <input
+                              required
+                              type="number"
+                              min="0"
+                              value={formData.minStock ?? 0}
+                              onChange={(e) => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
+                              className="input-field font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="input-label select-none font-bold uppercase text-[11px] tracking-wider text-text-muted">Initial Stock</label>
+                            <input
+                              required
+                              type="number"
+                              min="0"
+                              value={formData.stock ?? 0}
+                              onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
+                              className="input-field font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
-              <div className="flex items-center justify-between p-3 bg-bg-surface-2 rounded-lg border border-border-light">
-                <div className="flex items-center gap-3">
-                  <div className={clsx("w-3 h-3 rounded-full", formData.isActive ? "bg-success" : "bg-text-disabled")} />
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-text-secondary select-none cursor-pointer">Live in Catalog</label>
+                    <div>
+                      <label className="input-label font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Description</label>
+                      <textarea
+                        value={formData.description || ''}
+                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                        className="input-field resize-none"
+                        rows={3}
+                        placeholder="Summarize ingredients or preparation style..."
+                      />
+                    </div>
+
+                    {editingItem && (
+                      <div className="pt-2 flex justify-start">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedModItemId(editingItem.id);
+                            setActiveTab('modifiers');
+                            setIsItemModalOpen(false);
+                          }}
+                          className="text-xs font-bold text-accent hover:text-accent-strong flex items-center gap-1 uppercase tracking-wider"
+                        >
+                          Configure Modifiers for this item &rarr;
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, isActive: !formData.isActive })}
-                  className={clsx(
-                    "w-10 h-5 rounded-full p-1 transition-all flex items-center",
-                    formData.isActive ? "bg-success justify-end" : "bg-text-disabled justify-start"
-                  )}
-                >
-                  <div className="w-3 h-3 bg-white rounded-full shadow-sm" />
-                </button>
               </div>
 
-              <div className="pt-2">
-                <button type="submit" className="btn-primary w-full py-4 text-sm tracking-widest">
+              {/* Full Width Footer */}
+              <div className="px-8 py-5 border-t border-border-light bg-bg-surface shrink-0 mt-auto">
+                <button type="submit" className="btn-primary w-full py-4 text-sm tracking-widest uppercase font-black">
                   <Save className="w-5 h-5 mr-3" />
-                  <span>Commit To Registry</span>
+                  <span>Save Item</span>
                 </button>
               </div>
             </form>

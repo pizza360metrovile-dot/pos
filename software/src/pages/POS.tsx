@@ -37,7 +37,7 @@ export default function POS() {
     item: MenuItem; 
     editingId?: string; 
     initialModifiers?: OrderItemModifier[]; 
-    initialNotes?: string 
+    initialNotes?: string;
   } | null>(null);
 
   const receiptRef = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ export default function POS() {
   const heldOrders = useMemo(() => orders.filter(o => o.status === 'held'), [orders]);
 
   const handleAddToCart = (item: MenuItem) => {
-    const hasModifiers = modifierGroups.some(g => Number(g.categoryId) === Number(item.categoryId));
+    const hasModifiers = modifierGroups.some(g => String(g.menuItemId) === String(item.id));
     if (hasModifiers) {
       setModifierModalData({ item });
     } else {
@@ -167,49 +167,113 @@ export default function POS() {
   }, [cart, lastSnapshot]);
 
   const sendToKitchen = async () => {
-    if (cart.length === 0) {
-      if (lastSnapshot) {
-        const confirmed = await showConfirmModal({
-          title: 'Cancel Order',
-          message: 'All items removed. Send full cancellation to kitchen?',
-          confirmLabel: 'Send Cancellation',
-          cancelLabel: 'Keep',
-          isDanger: true
-        });
-        if (!confirmed) {
+    try {
+      if (cart.length === 0) {
+        if (lastSnapshot) {
+          const confirmed = await showConfirmModal({
+            title: 'Cancel Order',
+            message: 'All items removed. Send full cancellation to kitchen?',
+            confirmLabel: 'Send Cancellation',
+            cancelLabel: 'Keep',
+            isDanger: true
+          });
+          if (!confirmed) {
+            return;
+          }
+        } else {
           return;
         }
-      } else {
+      }
+
+      const isFirstKOT = !lastSnapshot;
+      
+      if (!isFirstKOT && !deltas) {
+        toast.info('No new items to send to kitchen');
         return;
       }
+
+      let orderToSync: Order;
+
+      if (activeOrder) {
+        orderToSync = {
+          ...activeOrder,
+          items: [...cart],
+          subtotal,
+          taxAmount,
+          total,
+          deliveryCharge: effectiveDeliveryCharge,
+          deliveryChargeWaived,
+          deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+          updatedAt: Date.now(),
+        };
+        await updateOrder(orderToSync);
+      } else {
+        orderToSync = {
+          id: crypto.randomUUID(),
+          orderNumber: `${Date.now().toString().slice(-6)}`,
+          items: [...cart],
+          subtotal,
+          taxAmount,
+          total,
+          type: orderType,
+          deliveryCharge: effectiveDeliveryCharge,
+          deliveryChargeWaived,
+          deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+          customerName: customerName || undefined,
+          tableNumber: orderType === OrderType.DINE_IN ? tableNumber : undefined,
+          status: 'in-progress',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          kotPrinted: true,
+        };
+        await addOrder(orderToSync);
+        setActiveOrder(orderToSync);
+      }
+
+      if (settings.autoPrintKOT) {
+        if (isFirstKOT) {
+          handleKOTPrint();
+        } else {
+          handleDeltaKOTPrint();
+        }
+      }
+
+      // Save snapshot AFTER printing to ensure print component has the correct deltas
+      const kotNumber = (lastSnapshot?.kotNumber || 0) + 1;
+      await addKotSnapshot({
+        orderId: orderToSync.id,
+        kotNumber,
+        sentAt: Date.now(),
+        items: JSON.parse(JSON.stringify(cart))
+      });
+
+      toast.success(isFirstKOT ? 'Order sent to kitchen' : 'Kitchen update sent');
+    } catch (error: any) {
+      console.error('Error sending to kitchen:', error);
+      toast.error(error.message || 'An error occurred while sending order to the kitchen. State reset.');
     }
+  };
 
-    const isFirstKOT = !lastSnapshot;
-    
-    if (!isFirstKOT && !deltas) {
-      toast.info('No new items to send to kitchen');
-      return;
-    }
+  const completeOrder = async (status: 'completed' | 'held' = 'completed') => {
+    try {
+      if (cart.length === 0) {
+        if (status === 'held') {
+          toast.error('Add items before holding an order');
+        }
+        return;
+      }
 
-    let orderToSync: Order;
+      // Workflow Safety Guard:
+      if (status === 'completed') {
+        if (!activeOrder || !lastSnapshot) {
+          toast.error('Please send order to the kitchen first.');
+          return;
+        }
+      }
 
-    if (activeOrder) {
-      orderToSync = {
-        ...activeOrder,
-        items: [...cart],
-        subtotal,
-        taxAmount,
-        total,
-        deliveryCharge: effectiveDeliveryCharge,
-        deliveryChargeWaived,
-        deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
-        updatedAt: Date.now(),
-      };
-      await updateOrder(orderToSync);
-    } else {
-      orderToSync = {
-        id: crypto.randomUUID(),
-        orderNumber: `${Date.now().toString().slice(-6)}`,
+      const order: Order = {
+        id: activeOrder?.id || crypto.randomUUID(),
+        orderNumber: activeOrder?.orderNumber || `${Date.now().toString().slice(-6)}`,
         items: [...cart],
         subtotal,
         taxAmount,
@@ -220,80 +284,46 @@ export default function POS() {
         deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
         customerName: customerName || undefined,
         tableNumber: orderType === OrderType.DINE_IN ? tableNumber : undefined,
-        status: 'in-progress',
-        createdAt: Date.now(),
+        status: status,
+        createdAt: activeOrder?.createdAt || Date.now(),
         updatedAt: Date.now(),
-        kotPrinted: true,
       };
-      await addOrder(orderToSync);
-      setActiveOrder(orderToSync);
-    }
 
-    if (settings.autoPrintKOT) {
-      if (isFirstKOT) {
-        handleKOTPrint();
+      if (activeOrder) {
+        await updateOrder(order);
       } else {
-        handleDeltaKOTPrint();
+        await addOrder(order);
       }
+
+      if (status === 'completed') {
+        setLastOrder(order);
+        if (settings.autoPrintReceipt) {
+          setTimeout(() => handleReceiptPrint(), 100);
+        }
+        clearCart();
+        setIsSuccess(true);
+        setTimeout(() => setIsSuccess(false), 3000);
+        toast.success(`Order #${order.orderNumber} completed`);
+      } else {
+        clearCart();
+        toast.info(`Order #${order.orderNumber} is on hold`);
+      }
+    } catch (error: any) {
+      console.error('Error completing order:', error);
+      toast.error(error.message || 'An error occurred while processing the order. System reset.');
     }
-
-    // Save snapshot AFTER printing to ensure print component has the correct deltas
-    const kotNumber = (lastSnapshot?.kotNumber || 0) + 1;
-    await addKotSnapshot({
-      orderId: orderToSync.id,
-      kotNumber,
-      sentAt: Date.now(),
-      items: JSON.parse(JSON.stringify(cart))
-    });
-
-    toast.success(isFirstKOT ? 'Order sent to kitchen' : 'Kitchen update sent');
   };
 
-  const completeOrder = async (status: 'completed' | 'held' = 'completed') => {
-    if (cart.length === 0) {
-      if (status === 'held') {
-        toast.error('Add items before holding an order');
-      }
+  const handlePrintReceiptReceiptCheck = () => {
+    if (cart.length === 0 && !lastOrder) {
+      toast.error('Cannot print: Order incomplete.');
       return;
     }
-
-    const order: Order = {
-      id: activeOrder?.id || crypto.randomUUID(),
-      orderNumber: activeOrder?.orderNumber || `${Date.now().toString().slice(-6)}`,
-      items: [...cart],
-      subtotal,
-      taxAmount,
-      total,
-      type: orderType,
-      deliveryCharge: effectiveDeliveryCharge,
-      deliveryChargeWaived,
-      deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
-      customerName: customerName || undefined,
-      tableNumber: orderType === OrderType.DINE_IN ? tableNumber : undefined,
-      status: status,
-      createdAt: activeOrder?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    if (activeOrder) {
-      await updateOrder(order);
-    } else {
-      await addOrder(order);
+    if (cart.length > 0 && (!activeOrder || !lastSnapshot)) {
+      toast.error('Cannot print: Order incomplete.');
+      return;
     }
-
-    if (status === 'completed') {
-      setLastOrder(order);
-      if (settings.autoPrintReceipt) {
-        setTimeout(() => handleReceiptPrint(), 100);
-      }
-      clearCart();
-      setIsSuccess(true);
-      setTimeout(() => setIsSuccess(false), 3000);
-      toast.success(`Order #${order.orderNumber} completed`);
-    } else {
-      clearCart();
-      toast.info(`Order #${order.orderNumber} is on hold`);
-    }
+    handleReceiptPrint();
   };
 
   const retrieveOrder = async (order: Order, force = false) => {
@@ -741,8 +771,7 @@ export default function POS() {
                 )}
               </button>
               <button
-                onClick={() => handleReceiptPrint()}
-                disabled={!lastOrder && cart.length === 0}
+                onClick={() => handlePrintReceiptReceiptCheck()}
                 className="h-[44px] bg-bg-surface-2 border border-border-light hover:bg-bg-app rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold uppercase text-text-primary tracking-widest shadow-sm transition-colors"
               >
                 <Printer className="w-4 h-4" />

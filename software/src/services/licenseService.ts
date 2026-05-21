@@ -94,6 +94,21 @@ export async function getLocalSubscription(): Promise<SubscriptionSettings> {
   return newSub;
 }
 
+export async function getOrCreateDeviceId(): Promise<string> {
+  const diEntry = await db.table('appMeta').get('_di');
+  if (diEntry && diEntry.value) {
+    return diEntry.value;
+  }
+  const newDeviceId = 'device-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  await db.table('appMeta').put({ key: '_di', value: newDeviceId });
+  return newDeviceId;
+}
+
+export async function computeChecksum(keyId: string, expiresAt: number, deviceId: string): Promise<string> {
+  const message = `${keyId}:${expiresAt}:${deviceId}:${SECRET_SALT}`;
+  return hashSHA256(message);
+}
+
 /**
  * Offline-first Activation: Validate, check IndexedDB, extend subscription, queue sync payload
  */
@@ -120,6 +135,27 @@ export async function activateLicenseKey(inputKey: string): Promise<Subscription
 
   const updatedSub = { expiryDate: newExpiry };
   await db.settings.put({ key: 'subscriptionSettings', value: updatedSub });
+
+  // Save to appMeta table
+  const keyId = signature;
+  const expiresAt = newExpiry;
+  const deviceId = await getOrCreateDeviceId();
+  const checksum = await computeChecksum(keyId, expiresAt, deviceId);
+
+  await db.table('appMeta').put({
+    key: '_ki', value: keyId });
+  await db.table('appMeta').put({
+    key: '_xe', value: expiresAt });
+  await db.table('appMeta').put({
+    key: '_di', value: deviceId });
+  await db.table('appMeta').put({
+    key: '_ia', value: true });
+  await db.table('appMeta').put({
+    key: '_cs', value: checksum });
+  await db.table('appMeta').put({
+    key: '_lv', value: Date.now() });
+
+  console.log('License saved:', await db.table('appMeta').toArray());
 
   // 5. Query and push payload metadata into Dexie background Sync Queue
   await db.sync_queue.add({

@@ -12,6 +12,8 @@ interface ModifierModalProps {
   initialNotes?: string;
   onClose: () => void;
   onConfirm: (modifiers: OrderItemModifier[], notes: string) => void;
+  titleOverride?: string;
+  subtitleOverride?: string;
 }
 
 export default function ModifierModal({ 
@@ -20,14 +22,16 @@ export default function ModifierModal({
   initialModifiers = [], 
   initialNotes = '', 
   onClose, 
-  onConfirm 
+  onConfirm,
+  titleOverride,
+  subtitleOverride
 }: ModifierModalProps) {
   const { modifierGroups, modifierOptions, settings } = useStore();
   const [selectedModifiers, setSelectedModifiers] = useState<OrderItemModifier[]>(initialModifiers);
   const [notes, setNotes] = useState(initialNotes);
 
   const groups = modifierGroups
-    .filter(g => String(g.categoryId) === String(item.categoryId))
+    .filter(g => String(g.menuItemId) === String(item.id))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
   const getOptions = (groupId: string | number) => 
@@ -83,14 +87,18 @@ export default function ModifierModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-[2px] animate-fade-in">
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-bg-surface w-full max-w-2xl border border-border-light rounded-xl shadow-modal overflow-hidden flex flex-col max-h-[90vh]"
+         initial={{ opacity: 0, scale: 0.95, y: 20 }}
+         animate={{ opacity: 1, scale: 1, y: 0 }}
+         className="bg-bg-surface w-full max-w-2xl border border-border-light rounded-xl shadow-modal overflow-hidden flex flex-col max-h-[90vh]"
       >
         <div className="px-6 py-4.5 border-b border-border-light flex justify-between items-start shrink-0 bg-bg-surface">
           <div>
-            <h2 className="text-[17px] font-bold text-text-primary leading-tight">{item.name}</h2>
-            <p className="text-[13px] text-text-muted mt-0.5">Customize your selection</p>
+            <h2 className="text-[17px] font-bold text-text-primary leading-tight">
+              {titleOverride || item.name}
+            </h2>
+            <p className="text-[13px] text-text-muted mt-0.5">
+              {subtitleOverride || "Customize your selection"}
+            </p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-bg-surface-2 rounded-full text-text-muted hover:text-text-primary transition-all">
             <X className="w-5 h-5" />

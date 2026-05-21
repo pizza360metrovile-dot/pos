@@ -73,6 +73,7 @@ export const KitchenTicket = React.forwardRef<HTMLDivElement, { order: Order; se
                     ))}
                   </div>
                 )}
+
              </div>
           ))}
         </div>
@@ -164,6 +165,7 @@ export const DeltaKitchenTicket = React.forwardRef<HTMLDivElement, {
                       ))}
                     </div>
                   )}
+
                 </div>
               ))}
             </div>
@@ -190,6 +192,7 @@ export const DeltaKitchenTicket = React.forwardRef<HTMLDivElement, {
                       ))}
                     </div>
                   )}
+
                 </div>
               ))}
             </div>
@@ -329,6 +332,7 @@ export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; 
                       </td>
                     </tr>
                   ))}
+
                 </React.Fragment>
               ))}
             </tbody>

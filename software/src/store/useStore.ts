@@ -8,7 +8,7 @@ import { db } from '../lib/db';
 import { MenuItem, Category, Order, OrderItem, RestaurantSettings, OrderType, Ingredient, Recipe, RecipeItem, StockLog, KotSnapshot, ModifierGroup, ModifierOption, OrderItemModifier } from '../types';
 import { toast } from 'sonner';
 import { fireStore } from '../lib/firebase';
-import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings } from '../services/licenseService';
+import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings, getOrCreateDeviceId, computeChecksum } from '../services/licenseService';
 import { 
   doc, 
   setDoc, 
@@ -194,6 +194,113 @@ const SEED_MENU_ITEMS: MenuItem[] = [
   { id: 'item-5', name: 'Garlic Bread', price: 3.99, categoryId: 2, description: 'Warm garlic bread', isActive: true, stock: 40, minStock: 10, directStock: 40, createdAt: Date.now() },
 ];
 
+async function deductInventory(order: Order, get: () => any) {
+  const autoDisabledItems: string[] = [];
+
+  for (const item of order.items) {
+    // 1. Stock deduction for the item itself if it is a 'stocked' type
+    const menuItem = await db.menuItems.get(item.menuItemId);
+    if (menuItem) {
+      const categoryId = isNaN(Number(menuItem.categoryId)) ? menuItem.categoryId : Number(menuItem.categoryId);
+      const category = await db.categories.get(categoryId);
+      
+      if (category?.type === 'stocked') {
+        const newDirectStock = Math.max(0, menuItem.directStock - item.quantity);
+        const isOut = newDirectStock <= 0;
+        const updatedItem = { 
+          ...menuItem, 
+          directStock: newDirectStock,
+          isActive: isOut ? false : menuItem.isActive,
+          disabledReason: isOut ? 'out_of_stock' : menuItem.disabledReason
+        };
+        await db.menuItems.update(menuItem.id, updatedItem as any);
+        get().syncToFirebase('menuItems', menuItem.id, updatedItem);
+
+        // Stock Log for sale
+        const logEntry: StockLog = {
+          menuItemId: menuItem.id,
+          changeAmount: -item.quantity,
+          reason: 'sale',
+          remainingAfter: newDirectStock,
+          createdAt: Date.now()
+        };
+        const logId = await db.stockLog.add(logEntry);
+        get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+        if (newDirectStock === 0) {
+          toast.warning(`${menuItem.name} is now out of stock and has been hidden from the menu`);
+        } else if (newDirectStock <= menuItem.minStock) {
+          toast.warning(`${menuItem.name} stock is low — only ${newDirectStock} remaining`);
+        }
+      }
+    }
+
+    const recipe = await db.recipes.where({ menuItemId: item.menuItemId }).first();
+    if (recipe) {
+      const recipeItems = await db.recipeItems.where({ recipeId: recipe.id }).toArray();
+      for (const rItem of recipeItems) {
+        const ingredient = await db.ingredients.get(rItem.ingredientId!);
+        if (ingredient) {
+          const deduction = rItem.quantityUsed * item.quantity;
+          // Subtract the exact quantity defined in the recipe, allowing negative stock
+          const newStock = ingredient.currentStock - deduction;
+          const updatedIngredient = { ...ingredient, currentStock: newStock };
+          
+          await db.ingredients.update(ingredient.id!, updatedIngredient);
+          get().syncToFirebase('ingredients', ingredient.id!, updatedIngredient);
+          
+          const logEntry = {
+            ingredientId: ingredient.id!,
+            changeAmount: -deduction,
+            reason: 'sale',
+            remainingAfter: newStock,
+            createdAt: Date.now()
+          };
+          const logId = await db.stockLog.add(logEntry);
+          get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+          if (newStock < 0) {
+            // Low stock alert with negative deficit logged
+            toast.warning(`Ingredient "${ingredient.name}" current stock is insufficient. Deficit logged: ${newStock.toFixed(2)} ${ingredient.unit}`);
+          } else if (newStock <= ingredient.reorderThreshold) {
+            toast.warning(`Ingredient "${ingredient.name}" stock is low — only ${newStock.toFixed(2)} ${ingredient.unit} remaining`);
+          }
+
+          if (newStock <= 0) {
+            const affectedRecipes = await db.recipeItems.where({ ingredientId: ingredient.id! }).toArray();
+            for (const affRecipeItem of affectedRecipes) {
+              const affRecipe = await db.recipes.get(affRecipeItem.recipeId);
+              if (affRecipe) {
+                const affMenuItem = await db.menuItems.get(affRecipe.menuItemId);
+                if (affMenuItem && affMenuItem.isActive) {
+                  const affCategoryId = isNaN(Number(affMenuItem.categoryId)) ? affMenuItem.categoryId : Number(affMenuItem.categoryId);
+                  const affCategory = await db.categories.get(affCategoryId);
+                  // Only auto-disable if it's a Stocked item
+                  if (affCategory?.type === 'stocked') {
+                    const updatedAffItem = { 
+                      ...affMenuItem, 
+                      isActive: false,
+                      disabledReason: 'out_of_stock'
+                    } as MenuItem;
+                    await db.menuItems.update(affMenuItem.id, updatedAffItem as any);
+                    get().syncToFirebase('menuItems', affMenuItem.id, updatedAffItem);
+                    autoDisabledItems.push(affMenuItem.name);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (autoDisabledItems.length > 0) {
+    const uniqueDisabled = Array.from(new Set(autoDisabledItems));
+    toast.warning(`Some items were auto-disabled: ${uniqueDisabled.join(', ')} due to out of stock ingredients`);
+  }
+}
+
 export const useStore = create<StoreState>((set, get) => ({
   menuItems: [],
   categories: [],
@@ -272,8 +379,28 @@ export const useStore = create<StoreState>((set, get) => ({
     window.addEventListener('keydown', updateActivity);
 
     // Initial load from Dexie
-    const categories = await db.categories.toArray();
-    const menuItems = await db.menuItems.toArray();
+    let categories = await db.categories.toArray();
+    let menuItems = await db.menuItems.toArray();
+
+    // Revert/Cleanup: Delete any existing Deals category and deal items from IndexedDB
+    if (categories.some(c => c.id === 'deals-cat' || c.name === 'Deals')) {
+      try {
+        await db.categories.delete('deals-cat');
+        categories = categories.filter(c => c.id !== 'deals-cat');
+      } catch (err) {
+        console.warn('Failed to clean up deals category', err);
+      }
+    }
+    if (menuItems.some(i => i.id === 'deal-1' || i.id === 'deal-2')) {
+      try {
+        await db.menuItems.delete('deal-1');
+        await db.menuItems.delete('deal-2');
+        menuItems = menuItems.filter(i => i.id !== 'deal-1' && i.id !== 'deal-2');
+      } catch (err) {
+        console.warn('Failed to clean up deal items', err);
+      }
+    }
+
     const settingsEntry = await db.settings.where({ key: 'main' }).first();
     const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
     const orders = await db.orders.orderBy('createdAt').reverse().toArray();
@@ -285,8 +412,39 @@ export const useStore = create<StoreState>((set, get) => ({
     const modifierGroups = await db.modifierGroups.toArray();
     const modifierOptions = await db.modifierOptions.toArray();
     
-    // Load subscription settings
-    const subscription = await getLocalSubscription();
+    // Ensure stable device ID is generated once
+    await getOrCreateDeviceId();
+
+    // 4.5 Launch License Check Sequence
+    const ki = await db.appMeta.get('_ki');
+    const xe = await db.appMeta.get('_xe');
+    const di = await db.appMeta.get('_di');
+    const cs = await db.appMeta.get('_cs');
+
+    let licenseValid = false;
+    let finalExpiry = 0;
+
+    if (ki && xe && di && cs && ki.value !== undefined && xe.value !== undefined && di.value !== undefined && cs.value !== undefined) {
+      const recomputed = await computeChecksum(ki.value, xe.value, di.value);
+      if (recomputed === cs.value) {
+        licenseValid = true;
+        finalExpiry = Number(xe.value);
+      } else {
+        // Mismatch: clear appMeta (keeping deviceId)
+        await db.appMeta.delete('_ki');
+        await db.appMeta.delete('_xe');
+        await db.appMeta.delete('_ia');
+        await db.appMeta.delete('_cs');
+        await db.appMeta.delete('_lv');
+      }
+    } else {
+      // ANY field missing
+      licenseValid = false;
+    }
+
+    // Update local subscriptionSettings to stay in sync with our verified check
+    await db.settings.put({ key: 'subscriptionSettings', value: { expiryDate: finalExpiry } });
+    const subscription = { expiryDate: finalExpiry };
     // Fire-and-forget background synchronization
     triggerBackgroundSync().catch(err => console.warn('Startup sync failed:', err));
 
@@ -323,7 +481,7 @@ export const useStore = create<StoreState>((set, get) => ({
         const category = categories.find(c => Number(c.id) === Number(item.categoryId));
         if (category?.type === 'prepared') {
           repairedMenuItems[i] = { ...item, isActive: true, disabledReason: null };
-          await db.menuItems.update(item.id, repairedMenuItems[i]);
+          await db.menuItems.update(item.id, repairedMenuItems[i] as any);
           console.log(`Auto-restored prepared item: ${item.name}`);
           needsRepairUpdate = true;
         }
@@ -569,7 +727,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   addOrder: async (order) => {
-    await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog], async () => {
+    await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories], async () => {
       await db.orders.add(order);
       get().syncToFirebase('orders', order.id, order);
       
@@ -578,102 +736,7 @@ export const useStore = create<StoreState>((set, get) => ({
       orderItems.forEach(item => get().syncToFirebase('orderItems', item.id, item));
 
       if (order.status === 'completed') {
-        const autoDisabledItems: string[] = [];
-
-        for (const item of order.items) {
-          const menuItem = await db.menuItems.get(item.menuItemId);
-          if (menuItem) {
-            const categoryId = isNaN(Number(menuItem.categoryId)) ? menuItem.categoryId : Number(menuItem.categoryId);
-            const category = await db.categories.get(categoryId);
-            
-            // Stock deduction for 'stocked' types
-            if (category?.type === 'stocked') {
-              const newDirectStock = Math.max(0, menuItem.directStock - item.quantity);
-              const isOut = newDirectStock <= 0;
-              const updatedItem = { 
-                ...menuItem, 
-                directStock: newDirectStock,
-                isActive: isOut ? false : menuItem.isActive,
-                disabledReason: isOut ? 'out_of_stock' : menuItem.disabledReason
-              };
-              await db.menuItems.update(menuItem.id, updatedItem);
-              get().syncToFirebase('menuItems', menuItem.id, updatedItem);
-
-              // Stock Log for sale
-              const logEntry: StockLog = {
-                menuItemId: menuItem.id,
-                changeAmount: -item.quantity,
-                reason: 'sale',
-                remainingAfter: newDirectStock,
-                createdAt: Date.now()
-              };
-              const logId = await db.stockLog.add(logEntry);
-              get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
-
-              if (newDirectStock === 0) {
-                toast.warning(`${menuItem.name} is now out of stock and has been hidden from the menu`);
-              } else if (newDirectStock <= menuItem.minStock) {
-                toast.warning(`${menuItem.name} stock is low — only ${newDirectStock} remaining`);
-              }
-            }
-          }
-
-          const recipe = await db.recipes.where({ menuItemId: item.menuItemId }).first();
-          if (recipe) {
-            const recipeItems = await db.recipeItems.where({ recipeId: recipe.id }).toArray();
-            for (const rItem of recipeItems) {
-              const ingredient = await db.ingredients.get(rItem.ingredientId!);
-              if (ingredient) {
-                const deduction = rItem.quantityUsed * item.quantity;
-                const newStock = Math.max(0, ingredient.currentStock - deduction);
-                const updatedIngredient = { ...ingredient, currentStock: newStock };
-                
-                await db.ingredients.update(ingredient.id!, updatedIngredient);
-                get().syncToFirebase('ingredients', ingredient.id!, updatedIngredient);
-                
-                const logEntry = {
-                  ingredientId: ingredient.id!,
-                  changeAmount: -deduction,
-                  reason: 'sale',
-                  remainingAfter: newStock,
-                  createdAt: Date.now()
-                };
-                const logId = await db.stockLog.add(logEntry);
-                get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
-
-                if (newStock <= 0) {
-                  const affectedRecipes = await db.recipeItems.where({ ingredientId: ingredient.id! }).toArray();
-                  for (const affRecipeItem of affectedRecipes) {
-                    const affRecipe = await db.recipes.get(affRecipeItem.recipeId);
-                    if (affRecipe) {
-                      const affMenuItem = await db.menuItems.get(affRecipe.menuItemId);
-                      if (affMenuItem && affMenuItem.isActive) {
-                        const affCategoryId = isNaN(Number(affMenuItem.categoryId)) ? affMenuItem.categoryId : Number(affMenuItem.categoryId);
-                        const affCategory = await db.categories.get(affCategoryId);
-                        // Only auto-disable if it's a Stocked item
-                        if (affCategory?.type === 'stocked') {
-                          const updatedAffItem = { 
-                            ...affMenuItem, 
-                            isActive: false,
-                            disabledReason: 'out_of_stock'
-                          } as MenuItem;
-                          await db.menuItems.update(affMenuItem.id, updatedAffItem);
-                          get().syncToFirebase('menuItems', affMenuItem.id, updatedAffItem);
-                          autoDisabledItems.push(affMenuItem.name);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        if (autoDisabledItems.length > 0) {
-          const uniqueDisabled = Array.from(new Set(autoDisabledItems));
-          toast.warning(`Some items were auto-disabled: ${uniqueDisabled.join(', ')} due to out of stock ingredients`);
-        }
+        await deductInventory(order, get);
       }
     });
 
@@ -695,10 +758,34 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
   updateOrder: async (order) => {
-    await db.orders.put(order);
-    get().syncToFirebase('orders', order.id, order);
-    set(state => ({ orders: state.orders.map(o => o.id === order.id ? order : o) }));
-    toast.success('Order updated');
+    await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories], async () => {
+      await db.orders.put(order);
+      get().syncToFirebase('orders', order.id, order);
+
+      if (order.status === 'completed') {
+        await deductInventory(order, get);
+      }
+    });
+
+    const [newOrders, newMenuItems, newIngredients, newStockLogs] = await Promise.all([
+      db.orders.orderBy('createdAt').reverse().toArray(),
+      db.menuItems.toArray(),
+      db.ingredients.toArray(),
+      db.stockLog.orderBy('createdAt').reverse().toArray()
+    ]);
+
+    set(state => ({ 
+      orders: newOrders,
+      menuItems: newMenuItems,
+      ingredients: newIngredients,
+      stockLogs: newStockLogs
+    }));
+
+    if (order.status === 'completed') {
+      toast.success('Order completed and inventory updated');
+    } else {
+      toast.success('Order updated');
+    }
   },
   deleteOrder: async (id) => {
     await db.orders.delete(id);
@@ -815,7 +902,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
     const newStock = item.directStock + amount;
     const updatedItem = { ...item, directStock: newStock, isActive: true };
-    await db.menuItems.update(id, updatedItem);
+    await db.menuItems.update(id, updatedItem as any);
     get().syncToFirebase('menuItems', id, updatedItem);
 
     const logEntry: StockLog = {

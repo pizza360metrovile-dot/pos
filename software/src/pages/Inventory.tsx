@@ -79,6 +79,10 @@ export default function Inventory() {
     return ingredients.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [ingredients, searchTerm]);
 
+  const negativeIngredients = useMemo(() => {
+    return ingredients.filter(i => i.currentStock < 0);
+  }, [ingredients]);
+
   const stockedItems = useMemo(() => {
     return menuItems.filter(item => {
       const isStocked = categories.find(c => Number(c.id) === Number(item.categoryId))?.type === 'stocked';
@@ -181,7 +185,7 @@ export default function Inventory() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-bg-app overflow-hidden">
+    <div className="h-full flex flex-col bg-bg-app overflow-y-auto custom-scrollbar">
       <header className="p-8 pb-4 shrink-0">
         <div className="flex justify-between items-start mb-8">
           <div>
@@ -253,6 +257,29 @@ export default function Inventory() {
           </div>
         </div>
 
+        {negativeIngredients.length > 0 && (
+          <div className="mb-6 bg-rose-500/10 border border-rose-500/20 rounded-xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fade-in text-text-primary">
+            <div className="flex gap-4">
+              <div className="p-3 bg-danger-light rounded-lg text-danger mt-1 md:mt-0 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-danger uppercase tracking-tight">Negative Stock Deficit Report</h3>
+                <p className="text-[13px] text-text-secondary mt-1 max-w-3xl">
+                  The following ingredients have negative levels. They have been sold below zero stock to avoid blocking sales:
+                </p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {negativeIngredients.map(item => (
+                    <span key={item.id} className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 text-rose-500 rounded-md text-[11px] font-bold font-mono border border-rose-500/20">
+                      {item.name}: {item.currentStock.toFixed(2)} {item.unit}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-text-placeholder z-10 pointer-events-none" />
           <input
@@ -280,7 +307,7 @@ export default function Inventory() {
               </thead>
               <tbody className="divide-y divide-border-light">
                 {filteredIngredients.map(i => {
-                  const status = i.currentStock <= 0 ? 'Out' : i.currentStock <= i.reorderThreshold ? 'Low' : 'OK';
+                  const status = i.currentStock < 0 ? 'Negative' : i.currentStock === 0 ? 'Out' : i.currentStock <= i.reorderThreshold ? 'Low' : 'OK';
                   return (
                     <tr key={i.id} className="hover:bg-bg-surface-2 group transition-colors">
                       <td className="px-8 py-6">
@@ -291,13 +318,19 @@ export default function Inventory() {
                         <div className="flex items-center gap-4">
                           <span className={clsx(
                             "badge sm",
-                            status === 'OK' ? "badge-success" :
-                            status === 'Low' ? "badge-warning" :
-                            "badge-danger"
+                            status === 'OK' && "badge-success",
+                            status === 'Low' && "badge-warning",
+                            status === 'Negative' && "bg-rose-500/10 text-rose-500 border border-rose-500/35",
+                            status === 'Out' && "badge-danger"
                           )}>
-                            {status === 'OK' ? 'Sufficient' : status === 'Low' ? 'Restock Soon' : 'Depleted'}
+                            {status === 'OK' ? 'Sufficient' : status === 'Low' ? 'Restock Soon' : status === 'Negative' ? 'Negative Deficit' : 'Depleted'}
                           </span>
-                          <div className="font-mono text-sm font-bold text-text-primary">{i.currentStock} {i.unit}</div>
+                          <div className={clsx(
+                            "font-mono text-sm font-bold",
+                            i.currentStock < 0 ? "text-rose-500" : "text-text-primary"
+                          )}>
+                            {i.currentStock} {i.unit}
+                          </div>
                         </div>
                       </td>
                       <td className="px-8 py-6">

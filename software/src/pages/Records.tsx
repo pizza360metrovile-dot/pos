@@ -301,7 +301,7 @@ export default function Records() {
 
   return (
     <div className="flex h-full animate-fade-in divide-x divide-border-light bg-bg-app">
-      <div className="flex-1 flex flex-col p-8 lg:p-12 overflow-hidden">
+      <div className="flex-1 flex flex-col p-8 lg:p-12 overflow-y-auto custom-scrollbar">
         <header className="mb-10">
           <div className="flex justify-between items-start mb-8">
             <div>
