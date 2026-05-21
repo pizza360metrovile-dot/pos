@@ -8,6 +8,7 @@ import { db } from '../lib/db';
 import { MenuItem, Category, Order, OrderItem, RestaurantSettings, OrderType, Ingredient, Recipe, RecipeItem, StockLog, KotSnapshot, ModifierGroup, ModifierOption, OrderItemModifier } from '../types';
 import { toast } from 'sonner';
 import { fireStore } from '../lib/firebase';
+import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings } from '../services/licenseService';
 import { 
   doc, 
   setDoc, 
@@ -57,6 +58,11 @@ interface StoreState {
   lastSynced: number | null;
   lastAction: number;
   sidebarState: 'expanded' | 'collapsed';
+  
+  // Licensing State & Actions
+  subscription: SubscriptionSettings | null;
+  activateLicense: (key: string) => Promise<void>;
+  syncLicenses: () => Promise<void>;
 
   // Actions
   init: () => Promise<void>;
@@ -183,6 +189,7 @@ export const useStore = create<StoreState>((set, get) => ({
   lastSynced: null,
   lastAction: Date.now(),
   sidebarState: 'expanded',
+  subscription: null,
 
   // POS Initial State
   cart: [],
@@ -219,7 +226,10 @@ export const useStore = create<StoreState>((set, get) => ({
     }
 
     // 3. Online/Offline Listeners
-    window.addEventListener('online', () => set({ isOnline: true }));
+    window.addEventListener('online', () => {
+      set({ isOnline: true });
+      triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+    });
     window.addEventListener('offline', () => set({ isOnline: false }));
 
     // 4. Activity Tracking (8h timeout)
@@ -250,6 +260,11 @@ export const useStore = create<StoreState>((set, get) => ({
     const modifierGroups = await db.modifierGroups.toArray();
     const modifierOptions = await db.modifierOptions.toArray();
     
+    // Load subscription settings
+    const subscription = await getLocalSubscription();
+    // Fire-and-forget background synchronization
+    triggerBackgroundSync().catch(err => console.warn('Startup sync failed:', err));
+
     // Load Sidebar state
     const sidebarEntry = await db.settings.where({ key: 'sidebarState' }).first();
     const sidebarState = sidebarEntry ? sidebarEntry.value : 'expanded';
@@ -262,10 +277,12 @@ export const useStore = create<StoreState>((set, get) => ({
       
       const newCats = await db.categories.toArray();
       const newItems = await db.menuItems.toArray();
+      const newSettings = { ...DEFAULT_SETTINGS, licenseExpiry: subscription?.expiryDate };
       set({ 
         categories: newCats, 
         menuItems: newItems, 
-        settings: DEFAULT_SETTINGS, 
+        settings: newSettings, 
+        subscription,
         isLoading: false 
       });
       return;
@@ -288,10 +305,11 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     }
 
+    const mergedSettings = { ...settings, licenseExpiry: subscription?.expiryDate };
     set({ 
       categories, 
       menuItems: repairedMenuItems, 
-      settings, 
+      settings: mergedSettings, 
       orders, 
       ingredients,
       recipes,
@@ -301,6 +319,7 @@ export const useStore = create<StoreState>((set, get) => ({
       modifierGroups,
       modifierOptions,
       sidebarState,
+      subscription,
       isLoading: false 
     });
   },
@@ -379,7 +398,10 @@ export const useStore = create<StoreState>((set, get) => ({
       if (snap.exists()) {
         const settings = snap.data() as RestaurantSettings;
         db.settings.put({ key: 'main', value: settings });
-        set({ settings, lastSynced: Date.now() });
+        set(state => ({
+          settings: { ...settings, licenseExpiry: state.subscription?.expiryDate },
+          lastSynced: Date.now()
+        }));
       }
     });
   },
@@ -676,7 +698,10 @@ export const useStore = create<StoreState>((set, get) => ({
     if (user && fireStore) {
       await setDoc(doc(fireStore, 'restaurants', user.uid), settings);
     }
-    set({ settings, lastSynced: Date.now() });
+    set(state => ({
+      settings: { ...settings, licenseExpiry: state.settings.licenseExpiry },
+      lastSynced: Date.now()
+    }));
     toast.success('Settings updated');
   },
 
@@ -1007,6 +1032,33 @@ export const useStore = create<StoreState>((set, get) => ({
     } catch (err) {
       console.error(err);
       throw err;
+    }
+  },
+
+  activateLicense: async (key: string) => {
+    try {
+      const updatedSub = await activateLicenseKey(key);
+      set(state => ({
+        subscription: updatedSub,
+        settings: { ...state.settings, licenseExpiry: updatedSub.expiryDate }
+      }));
+      toast.success("License activated successfully! Extended by 180 days.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to activate license key");
+      throw err;
+    }
+  },
+
+  syncLicenses: async () => {
+    try {
+      await triggerBackgroundSync();
+      const sub = await getLocalSubscription();
+      set(state => ({
+        subscription: sub,
+        settings: { ...state.settings, licenseExpiry: sub.expiryDate }
+      }));
+    } catch (err: any) {
+      console.warn("Manual licensing sync failed:", err);
     }
   },
 }));

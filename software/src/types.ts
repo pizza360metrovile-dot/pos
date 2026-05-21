@@ -106,6 +106,7 @@ export interface RestaurantSettings {
   deliveryChargeLabel: string;
   deliveryChargeTaxable: boolean;
   autoLogoutTimeout: '1' | '4' | '8' | 'never';
+  licenseExpiry?: number;
 }
 
 export interface Ingredient {

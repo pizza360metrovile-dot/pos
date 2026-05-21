@@ -35,7 +35,8 @@ export class RMSDatabase extends Dexie {
   modifierOptions!: Table<ModifierOption>;
   orderItemModifiers!: Table<OrderItemModifier>;
   users!: Table<{ id: string; email: string; password: string }>;
-  appMeta!: Table<{ key: string; value: any }>;
+  used_keys!: Table<{ signature: string; timestamp: string }>;
+  sync_queue!: Table<{ id?: number; signature: string; timestamp: string; synced: number }>;
 
   constructor() {
     super('rms_db');
@@ -114,7 +115,8 @@ export class RMSDatabase extends Dexie {
     });
 
     this.version(11).stores({
-      appMeta: 'key'
+      used_keys: 'signature, timestamp',
+      sync_queue: '++id, signature, timestamp, synced'
     });
   }
 }

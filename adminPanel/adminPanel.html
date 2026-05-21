@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Restaurant License Key Generator</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0f172a, #111827);
+      font-family: Inter, Arial, sans-serif;
+      color: white;
+      padding: 20px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 520px;
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 22px;
+      padding: 32px;
+      box-shadow:
+        0 10px 30px rgba(0,0,0,0.35),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+
+    .title {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #cbd5e1;
+      margin-bottom: 28px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 14px;
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.08);
+      color: white;
+      outline: none;
+      font-size: 15px;
+      transition: 0.2s;
+    }
+
+    input:focus {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 4px rgba(96,165,250,0.15);
+    }
+
+    input::placeholder {
+      color: #94a3b8;
+    }
+
+    .btn {
+      width: 100%;
+      border: none;
+      border-radius: 14px;
+      padding: 15px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .generate-btn {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: white;
+      margin-bottom: 22px;
+    }
+
+    .generate-btn:hover {
+      transform: translateY(-1px);
+      opacity: 0.96;
+    }
+
+    .output-container {
+      display: none;
+    }
+
+    .output-label {
+      margin-bottom: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .output-box {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 16px;
+      word-break: break-all;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #93c5fd;
+      min-height: 90px;
+      margin-bottom: 14px;
+    }
+
+    .copy-btn {
+      background: #10b981;
+      color: white;
+    }
+
+    .copy-btn:hover {
+      opacity: 0.95;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: #10b981;
+      color: white;
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(20px);
+      transition: all 0.3s ease;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      font-size: 12px;
+      text-align: center;
+      color: #94a3b8;
+    }
+
+    @media (max-width: 520px) {
+      .card {
+        padding: 24px;
+      }
+
+      .title {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="title">License Key Generator</div>
+
+    <div class="subtitle">
+      Generate secure 6-month software license keys
+      for your restaurant POS system.
+    </div>
+
+    <div class="field">
+      <label class="label">Restaurant Unique ID</label>
+
+      <input
+        type="text"
+        id="restaurantId"
+        placeholder="Enter Restaurant Unique ID"
+      />
+    </div>
+
+    <button class="btn generate-btn" id="generateBtn">
+      Generate 6-Month Key
+    </button>
+
+    <div class="output-container" id="outputContainer">
+      <div class="output-label">Generated License Key</div>
+
+      <div class="output-box" id="outputKey"></div>
+
+      <button class="btn copy-btn" id="copyBtn">
+        Copy to Clipboard
+      </button>
+    </div>
+
+    
+  </div>
+
+  <div class="toast" id="toast">
+    License key copied successfully!
+  </div>
+
+  <script>
+    /**
+     * IMPORTANT:
+     * This salt MUST exactly match the POS application's salt.
+     */
+    const SECRET_SALT = "78R4JHGFpizza360metrovileEWIUH34@12<D>";
+
+    const restaurantIdInput = document.getElementById("restaurantId");
+    const generateBtn = document.getElementById("generateBtn");
+    const outputContainer = document.getElementById("outputContainer");
+    const outputKey = document.getElementById("outputKey");
+    const copyBtn = document.getElementById("copyBtn");
+    const toast = document.getElementById("toast");
+
+    let generatedKey = "";
+
+    async function sha256(message) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(message);
+
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+      const hex = hashArray
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      return hex;
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+
+      setTimeout(() => {
+        toast.classList.remove("show");
+      }, 2500);
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      try {
+        const rawRestaurantId = restaurantIdInput.value.trim();
+
+        if (!rawRestaurantId) {
+          showToast("Please enter Restaurant Unique ID");
+          return;
+        }
+
+        // Standardize alphanumeric POS registry name/ID representation to match software
+        const restaurantId = rawRestaurantId
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "") || "lux-bistro";
+
+        // Current timestamp in milliseconds
+        const timestamp = Date.now();
+
+        // Create string to hash
+        const rawString = restaurantId + timestamp + SECRET_SALT;
+
+        // Generate SHA-256 signature
+        const signature = await sha256(rawString);
+
+        // Combine timestamp + signature using standard pipe separator
+        const combined = `${timestamp}|${signature}`;
+
+        // Base64 encode final key
+        const base64Key = btoa(combined);
+
+        generatedKey = base64Key;
+
+        outputKey.textContent = generatedKey;
+        outputContainer.style.display = "block";
+
+      } catch (error) {
+        console.error(error);
+        showToast("Error generating key");
+      }
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      if (!generatedKey) return;
+
+      try {
+        await navigator.clipboard.writeText(generatedKey);
+        showToast("License key copied successfully!");
+      } catch (error) {
+        console.error(error);
+        showToast("Failed to copy");
+      }
+    });
+  </script>
+
+</body>
+</html>
+<!-- const SECRET_SALT ="78R4JHGFpizza360metrovileEWIUH34@12<D>"; -->

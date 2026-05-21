@@ -15,23 +15,22 @@ import {
   ChevronRight,
   AlertTriangle,
   LogOut,
-  Key,
+  Award,
   Copy,
-  Check
+  Check,
+  Key
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { toast } from 'sonner';
-import { loadLocalLicense, activateLicenseKey, getOrCreateDeviceId } from '../utils/licenseManager';
+import { getRestaurantId, generateTestingKey } from '../services/licenseService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const SECTIONS = [
-  { id: 'license', label: 'License & Activation', icon: Key, description: 'Manage and renew your POS software license key and device registration' },
   { id: 'profile', label: 'Restaurant Profile', icon: Building2, description: 'Basic information about your restaurant shown on receipts and reports' },
   { id: 'billing', label: 'Billing & Tax', icon: Receipt, description: 'Configure currency, tax rate, and how totals are calculated at checkout' },
   { id: 'delivery', label: 'Delivery', icon: Truck, description: 'Set delivery charges applied automatically to delivery orders' },
@@ -39,6 +38,7 @@ const SECTIONS = [
   { id: 'kitchen', label: 'Kitchen & KOT', icon: ChefHat, description: 'Control how kitchen order tickets are printed and what they show' },
   { id: 'backup', label: 'Data & Backup', icon: Database, description: 'Export your data for safekeeping or import a previous backup to restore' },
   { id: 'account', label: 'Account & Security', icon: Shield, description: 'Manage your login credentials and session security' },
+  { id: 'license', label: 'POS License', icon: Award, description: 'Manage your POS licenses, view status, activate offline keys' }
 ];
 
 // Section Components
@@ -146,79 +146,61 @@ export default function Settings() {
     importData, 
     user, 
     changePassword,
-    logout
+    logout,
+    subscription,
+    activateLicense,
+    syncLicenses
   } = useStore();
 
   const [formData, setFormData] = useState(settings);
   const [activeSection, setActiveSection] = useState('profile');
   const [savedStates, setSavedStates] = useState<Record<string, boolean>>({});
 
-  // License integration states
-  const [license, setLicense] = useState<any>(null);
-  const [renewalKey, setRenewalKey] = useState('');
-  const [isRenewing, setIsRenewing] = useState(false);
-  const [renewalError, setRenewalError] = useState<string | null>(null);
-  const [renewalSuccess, setRenewalSuccess] = useState<string | null>(null);
-  const [deviceId, setDeviceId] = useState('');
-
-  const getSection = (id: string) => SECTIONS.find(s => s.id === id)!;
-
-  const loadLicenseData = async () => {
-    const data = await loadLocalLicense();
-    setLicense(data);
-    setDeviceId(getOrCreateDeviceId());
-  };
+  // Licensing Page States
+  const [restaurantId, setRestaurantId] = useState('');
+  const [copiedId, setCopiedId] = useState(false);
+  const [licenseKeyInput, setLicenseKeyInput] = useState('');
+  const [isActivating, setIsActivating] = useState(false);
+  const [activationError, setActivationError] = useState('');
+  const [generatedKey, setGeneratedKey] = useState('');
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   useEffect(() => {
-    loadLicenseData();
-  }, []);
+    getRestaurantId().then(setRestaurantId);
+  }, [formData.name]);
 
-  const handleKeyFormatChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    let formatted = '';
-    for (let i = 0; i < val.length; i++) {
-      if (i > 0 && i % 5 === 0) {
-        formatted += '-';
-      }
-      formatted += val[i];
-    }
-    setRenewalKey(formatted.slice(0, 29));
+  const handleCopyText = (text: string, setCopiedState: (v: boolean) => void) => {
+    navigator.clipboard.writeText(text);
+    setCopiedState(true);
+    setTimeout(() => {
+      setCopiedState(false);
+    }, 2000);
   };
 
-  const handleValidateAndActivate = async () => {
-    setRenewalError(null);
-    setRenewalSuccess(null);
-    
-    if (!renewalKey.trim()) {
-      setRenewalError("Please enter a license key.");
-      return;
-    }
-
-    setIsRenewing(true);
+  const handleActivate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActivationError('');
+    setIsActivating(true);
     try {
-      const res = await activateLicenseKey(renewalKey);
-      if (res.success) {
-        const formattedDate = res.expiresAt ? format(new Date(res.expiresAt), 'dd MMM yyyy HH:mm') : 'N/A';
-        setRenewalSuccess(`License activated! Valid until ${formattedDate}`);
-        setRenewalKey('');
-        await loadLicenseData();
-        // Notify application
-        window.dispatchEvent(new Event('license-updated'));
-        toast.success("License activated successfully!");
-      } else {
-        if (res.reason && (res.reason.includes("Invalid license signature") || res.reason.includes("parsing payload") || res.reason.includes("signature verification") || res.reason.includes("Invalid license key"))) {
-          setRenewalError("Invalid license key. Please check and try again.");
-        } else if (res.reason && res.reason.includes("already been used on another device")) {
-          setRenewalError("This key is already used on another device.");
-        } else {
-          setRenewalError(res.reason || "Invalid license key. Please check and try again.");
-        }
-      }
-    } catch (err) {
-      setRenewalError(err instanceof Error ? err.message : "Activation failed");
+      await activateLicense(licenseKeyInput.trim());
+      setLicenseKeyInput('');
+    } catch (err: any) {
+      setActivationError(err.message || 'Verification failure');
     } finally {
-      setIsRenewing(false);
+      setIsActivating(false);
     }
+  };
+
+  const handleManualSyncKey = async () => {
+    setIsSyncing(true);
+    await syncLicenses();
+    setIsSyncing(false);
+  };
+
+  const handleGenerateKey = async () => {
+    const key = await generateTestingKey(restaurantId, Date.now());
+    setGeneratedKey(key);
   };
   
   // Backup state
@@ -353,156 +335,9 @@ export default function Settings() {
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-12 space-y-12 relative z-10 pointer-events-auto"
       >
-        {/* Section: LICENSE */}
-        <section id="license" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 transition-all hover:shadow-md relative z-20 pointer-events-auto">
-          <SectionHeader {...getSection('license')} />
-          
-          <div className="space-y-8">
-            {/* Info Card (read-only) */}
-            <div className="bg-bg-surface-2 border border-border-light p-6 rounded-xl space-y-4">
-              <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-text-placeholder">Active License Manifest</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <div className="text-[10px] text-text-placeholder font-bold uppercase tracking-widest mb-1">Restaurant ID</div>
-                  <div className="font-mono text-sm font-bold text-text-primary px-3 py-2 bg-bg-surface border border-border-light rounded-lg select-all">
-                    {license ? license.restaurantId : 'N/A (Activate Below)'}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] text-text-placeholder font-bold uppercase tracking-widest mb-1">License Status</div>
-                  <div>
-                    {license ? (
-                      (() => {
-                        const daysRemaining = Math.ceil((license.expiresAt - Date.now()) / 86400000);
-                        let badgeClass = "badge-success";
-                        let statusText = "Active";
-                        
-                        if (daysRemaining <= 10) {
-                          badgeClass = "bg-danger text-white border-danger";
-                          statusText = "Expiring Soon";
-                        } else if (daysRemaining <= 30) {
-                          badgeClass = "bg-warning text-text-primary border-warning/55";
-                          statusText = "Expiring";
-                        }
-                        
-                        return (
-                          <span className={`badge uppercase tracking-widest text-[10px] font-black px-4 py-1.5 ${badgeClass}`}>
-                            {statusText}
-                          </span>
-                        );
-                      })()
-                    ) : (
-                      <span className="badge bg-danger text-white border-danger uppercase tracking-widest text-[10px] font-black px-4 py-1.5 animate-pulse">
-                        Inactive / Missing
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] text-text-placeholder font-bold uppercase tracking-widest mb-1">Expiry Date</div>
-                  <div className="font-mono text-sm font-bold text-text-primary">
-                    {license ? format(new Date(license.expiresAt), 'dd MMM yyyy HH:mm') : 'N/A'}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] text-text-placeholder font-bold uppercase tracking-widest mb-1">Days Remaining</div>
-                  <div>
-                    {license ? (
-                      (() => {
-                        const daysRemaining = Math.ceil((license.expiresAt - Date.now()) / 86400000);
-                        let textColor = "text-success"; // green if > 30
-                        if (daysRemaining <= 10) {
-                          textColor = "text-danger animate-pulse font-black"; // red if <= 10
-                        } else if (daysRemaining <= 30) {
-                          textColor = "text-warning"; // amber if <= 30
-                        }
-                        return (
-                          <span className={`font-mono text-xl font-bold ${textColor}`}>
-                            {daysRemaining} Days
-                          </span>
-                        );
-                      })()
-                    ) : (
-                      <span className="font-mono text-sm font-bold text-text-placeholder">N/A</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="text-[10px] text-text-placeholder font-bold uppercase tracking-widest mb-1">Device ID</div>
-                  <div className="flex items-center gap-2">
-                    <div className="font-mono text-xs font-bold text-text-secondary px-3 py-2 bg-bg-surface border border-border-light rounded-lg flex-1 truncate">
-                      {deviceId}
-                    </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(deviceId);
-                        toast.success("Device ID copied to clipboard!");
-                      }}
-                      className="p-2 border border-border-light bg-bg-surface text-text-muted hover:text-text-primary hover:bg-bg-surface-2 rounded-lg transition-all"
-                      title="Copy Device ID"
-                      type="button"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Renewal Subsection */}
-            <div className="border-t border-border-light pt-8 space-y-6">
-              <div>
-                <h3 className="text-sm font-bold uppercase tracking-wide text-text-primary mb-1">Renew / Activate License</h3>
-                <p className="text-text-muted text-[13px] font-medium">
-                  Paste the new license key provided by your software provider
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={renewalKey}
-                    onChange={handleKeyFormatChange}
-                    placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
-                    className="w-full h-14 bg-bg-surface border-2 border-border-light rounded-xl px-5 text-lg font-mono font-bold tracking-widest text-text-primary focus:border-accent outline-none placeholder:text-text-placeholder text-center uppercase"
-                  />
-                </div>
-
-                {renewalError && (
-                  <div className="p-4 bg-danger-light border border-danger-border rounded-xl text-danger font-bold text-xs leading-relaxed uppercase tracking-wide">
-                    ⚠️ {renewalError}
-                  </div>
-                )}
-
-                {renewalSuccess && (
-                  <div className="p-4 bg-success-light border border-success-border rounded-xl text-success font-bold text-xs leading-relaxed uppercase tracking-wide">
-                    ✅ {renewalSuccess}
-                  </div>
-                )}
-
-                <button
-                  onClick={handleValidateAndActivate}
-                  disabled={isRenewing}
-                  className="w-full btn-primary h-12 text-[11px] font-bold uppercase tracking-widest shadow-lg flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 pointer-events-auto"
-                  type="button"
-                >
-                  <Key className="w-4 h-4" />
-                  {isRenewing ? 'Validating Connection...' : 'Validate & Activate'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* Section 1: RESTAURANT PROFILE */}
         <section id="profile" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 transition-all hover:shadow-md relative z-20 pointer-events-auto">
-          <SectionHeader {...getSection('profile')} />
+          <SectionHeader {...SECTIONS[0]} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <InputField 
               label="Restaurant Name" 
@@ -540,7 +375,7 @@ export default function Settings() {
 
         {/* Section 2: BILLING & TAX */}
         <section id="billing" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...getSection('billing')} />
+          <SectionHeader {...SECTIONS[1]} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="space-y-8">
               <div className="grid grid-cols-2 gap-6">
@@ -660,7 +495,7 @@ export default function Settings() {
 
         {/* Section 3: DELIVERY */}
         <section id="delivery" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...getSection('delivery')} />
+          <SectionHeader {...SECTIONS[2]} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="space-y-8">
               <Toggle 
@@ -728,7 +563,7 @@ export default function Settings() {
 
         {/* Section 4: RECEIPT CUSTOMIZATION */}
         <section id="receipt" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...getSection('receipt')} />
+          <SectionHeader {...SECTIONS[3]} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="space-y-6">
               <InputField 
@@ -813,7 +648,7 @@ export default function Settings() {
 
         {/* Section 5: KITCHEN & KOT */}
         <section id="kitchen" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...getSection('kitchen')} />
+          <SectionHeader {...SECTIONS[4]} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
             <div className="space-y-6">
               <Toggle label="Auto-print KOT on send to kitchen" value={formData.autoPrintKOT} onChange={v => setFormData({...formData, autoPrintKOT: v})} />
@@ -879,7 +714,7 @@ export default function Settings() {
 
         {/* Section 6: DATA & BACKUP */}
         <section id="backup" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...getSection('backup')} />
+          <SectionHeader {...SECTIONS[5]} />
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Export Card */}
@@ -967,7 +802,7 @@ export default function Settings() {
 
         {/* Section 7: ACCOUNT & SECURITY */}
         <section id="account" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 pb-32">
-          <SectionHeader {...getSection('account')} />
+          <SectionHeader {...SECTIONS[6]} />
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="space-y-8">
@@ -1052,6 +887,161 @@ export default function Settings() {
                System Architecture v4.0.1 (Stable)<br/>
                Binary Encrypted Persistent Cache Active
              </p>
+          </div>
+        </section>
+
+        {/* Section 8: POS LICENSE */}
+        <section id="license" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 pb-32">
+          <SectionHeader {...SECTIONS[7]} />
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+            {/* Status Panel */}
+            <div className="space-y-8">
+              <div className="p-6 bg-bg-surface-2 border border-border-light rounded-xl space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-text-placeholder uppercase tracking-widest leading-none">Subscription Status</span>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-text-primary">Validity Level</h3>
+                  </div>
+                  <span className={cn(
+                    "px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest border",
+                    !subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0
+                      ? "bg-danger/10 text-danger border-danger/20" 
+                      : "bg-success/10 text-success border-success/20"
+                  )}>
+                    {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 ? 'Expired' : 'Active'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-6 pt-4 border-t border-border-light">
+                  <div className={cn(
+                    "w-20 h-20 rounded-full border-4 flex flex-col items-center justify-center shrink-0 font-bold",
+                    !subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
+                      ? "border-danger/30 text-danger" 
+                      : "border-success/30 text-success"
+                  )}>
+                    <span className="text-2xl font-black leading-none">
+                      {subscription ? Math.max(0, Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000))) : 0}
+                    </span>
+                    <span className="text-[9px] font-black uppercase tracking-tight mt-1">Days</span>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-[14px] text-text-primary uppercase tracking-tight">
+                      {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
+                        ? 'Activation Required' 
+                        : 'Premium Access Active'}
+                    </h4>
+                    <p className="text-[11px] text-text-muted mt-1 uppercase tracking-tight leading-relaxed">
+                      {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
+                        ? 'All POS capabilities will expire or restrict. Fill a valid cryptographic voucher key below to restore system lifespans.' 
+                        : `Your subscription is valid until ${new Date(subscription.expiryDate).toLocaleDateString()}. Additional valid license keys will stack.`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-border-light flex justify-between items-center group relative">
+                  <div>
+                    <span className="text-[10px] font-bold text-text-placeholder uppercase tracking-widest">Registered POS ID</span>
+                    <p className="text-[13px] font-mono font-bold text-text-primary uppercase tracking-tight mt-0.5">{restaurantId}</p>
+                  </div>
+                  <button
+                    onClick={() => handleCopyText(restaurantId, setCopiedId)}
+                    className="p-3 bg-bg-surface border border-border-light hover:bg-bg-surface-2 rounded-lg text-text-secondary hover:text-text-primary transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto z-10"
+                    title="Copy POS ID"
+                  >
+                    {copiedId ? <Check className="w-4 h-4 text-success animate-scale-up" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Offline Actions & Manual Sync */}
+              <div className="p-6 bg-accent/5 border border-accent/10 rounded-xl flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-[13px] text-accent uppercase tracking-tight">Offline Queue Sync</h4>
+                  <p className="text-[10px] text-text-muted mt-1 uppercase tracking-tight">Synchronize offline-generated key activations with servers.</p>
+                </div>
+                <button
+                  onClick={handleManualSyncKey}
+                  disabled={isSyncing}
+                  className="px-5 py-3 bg-accent text-white hover:bg-accent/90 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:shadow-lg disabled:opacity-50 inline-flex items-center gap-2 cursor-pointer pointer-events-auto z-10"
+                >
+                  {isSyncing ? 'Syncing...' : 'Sync Cloud'}
+                </button>
+              </div>
+            </div>
+
+            {/* Verification Form */}
+            <div className="space-y-8">
+              <form onSubmit={handleActivate} className="bg-bg-surface-2 rounded-xl p-8 border border-border-light space-y-6">
+                <div className="flex items-center gap-3">
+                  <Key className="w-5 h-5 text-accent animate-pulse" />
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-text-primary">License Voucher Activation</h3>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="input-label">Cryptographic License Key</label>
+                  <textarea
+                    value={licenseKeyInput}
+                    onChange={(e) => setLicenseKeyInput(e.target.value)}
+                    placeholder="Enter license key here..."
+                    rows={4}
+                    className="input-field py-4 resize-none font-mono text-[11px] pointer-events-auto relative z-10"
+                    required
+                  />
+                </div>
+
+                {activationError && (
+                  <div className="p-4 bg-danger/10 border border-danger/20 text-danger rounded-lg text-[11px] font-bold uppercase tracking-wider text-center animate-fade-in">
+                    {activationError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isActivating || !licenseKeyInput.trim()}
+                  className="btn-primary w-full py-4 text-[11px] tracking-widest hover:bg-accent/95 shadow-lg shadow-accent/20 cursor-pointer disabled:opacity-50 pointer-events-auto relative z-10"
+                >
+                  {isActivating ? 'Verifying Cipher...' : 'Activate POS License'}
+                </button>
+              </form>
+
+              {/* Developer Testing Vouchers */}
+              {/* <div className="bg-bg-surface rounded-xl p-6 border-2 border-dashed border-border-light space-y-4">
+                <div>
+                  <h4 className="font-bold text-[12px] text-text-primary uppercase tracking-tight">Developer Testing Suite</h4>
+                  <p className="text-[10px] text-text-muted uppercase tracking-tight">Generate a valid 180-day key for this specific customized POS ID instantly.</p>
+                </div>
+
+                {!generatedKey ? (
+                  <button
+                    onClick={handleGenerateKey}
+                    className="w-full py-3 bg-bg-surface-2 hover:bg-border-light border border-border-light text-text-secondary rounded-lg text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 cursor-pointer pointer-events-auto z-10"
+                  >
+                    Manufacture valid test key
+                  </button>
+                ) : (
+                  <div className="space-y-3 animate-fade-in">
+                    <div className="p-4 bg-bg-surface-2 border border-border-light rounded-lg font-mono text-[10px] select-all break-all whitespace-pre-wrap text-text-secondary shrink-0">
+                      {generatedKey}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleCopyText(generatedKey, setCopiedKey)}
+                        className="flex-1 py-3 bg-success text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-success/90 transition-all text-center cursor-pointer pointer-events-auto z-10"
+                      >
+                        {copiedKey ? 'Voucher Copied!' : 'Copy Key'}
+                      </button>
+                      <button
+                        onClick={() => { setGeneratedKey(''); setCopiedKey(false); }}
+                        className="px-4 py-3 bg-bg-surface-2 hover:bg-border-light rounded-lg text-[10px] font-black uppercase text-text-placeholder cursor-pointer pointer-events-auto z-10"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div> */}
+            </div>
           </div>
         </section>
       </div>

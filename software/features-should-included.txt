@@ -1,7 +1,0 @@
-- elements par hover hota hy to text nazar nhi ata, hover par color change hona chahye text.
-- jaha jaha currency $ he waha par Rs. karen.
-- Navbar me hamari company ka name ana chahye.
-- bill slip me hamari company ka name/contact ana chahye.
-- Favicon change karen, upni company k logo ka lagay.
-- tab ka title par company ka nam lagay.
-- restaurant waly developer-tools(inspect) tak na ja saky. disable F12 , right-click ,and other ways. AI se pooch len ko kon se tareeqo se ja sakta hy,sabko block kare

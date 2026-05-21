@@ -22,26 +22,14 @@ import {
   Menu,
   ChevronLeft,
   X,
-  Circle,
-  Lock,
-  Key,
-  Copy
+  Circle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { toast, Toaster } from 'sonner';
+import { Toaster } from 'sonner';
 import { useStore } from './store/useStore';
 import { format } from 'date-fns';
-import { doc, getDocFromServer } from 'firebase/firestore';
-import { fireStore } from './lib/firebase';
-import { 
-  loadLocalLicense, 
-  clearLocalLicense, 
-  saveLocalLicense, 
-  getOrCreateDeviceId, 
-  activateLicenseKey 
-} from './utils/licenseManager';
 
 // Pages
 import POS from './pages/POS';
@@ -50,6 +38,7 @@ import Records from './pages/Records';
 import SettingsPage from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Login from './components/Login';
+import LicenseLockScreen from './components/LicenseLockScreen';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -365,160 +354,41 @@ export default function App() {
   const init = useStore(state => state.init);
   const isLoading = useStore(state => state.isLoading);
   const user = useStore(state => state.user);
+  const settings = useStore(state => state.settings);
   const sidebarState = useStore(state => state.sidebarState);
   const setSidebarStateResult = useStore(state => state.setSidebarState);
   
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const [isMobileMode, setIsMobileMode] = useState(false);
 
-  // Licensing Integration State Machine
-  const [licenseState, setLicenseState] = useState<'checking' | 'active' | 'warning' | 'expired' | 'missing' | 'offline_expired'>('checking');
-  const [licenseInfo, setLicenseInfo] = useState<any>(null);
-  const [daysLeft, setDaysLeft] = useState<number>(0);
-  const [licenseWarningDismissed, setLicenseWarningDismissed] = useState(false);
+  const [licenseStatus, setLicenseStatus] = useState<'active' | 'locked'>('locked');
+  const [licenseDaysLeft, setLicenseDaysLeft] = useState<number>(0);
 
-  // Activation Page Forms Local State
-  const [activationKey, setActivationKey] = useState('');
-  const [activationError, setActivationError] = useState<string | null>(null);
-  const [activationSuccess, setActivationSuccess] = useState<string | null>(null);
-  const [isActivating, setIsActivating] = useState(false);
-
-  const checkLicense = async () => {
-    try {
-      setLicenseState('checking');
-      const info = await loadLocalLicense();
-      
-      if (!info) {
-        setLicenseState('missing');
+  const checkLicenseStatus = (settings: any) => {
+    // If no expiry is found, treat as EXPIRED (Locked)
+    if (!settings?.licenseExpiry) {
+        setLicenseStatus('locked');
+        setLicenseDaysLeft(0);
         return;
-      }
-      
-      setLicenseInfo(info);
-      const now = Date.now();
-      
-      if (info.expiresAt <= now) {
-        setLicenseState('expired');
-        return;
-      }
-
-      const msLeft = info.expiresAt - now;
-      const calculatedDaysLeft = Math.ceil(msLeft / 86400000);
-      setDaysLeft(calculatedDaysLeft);
-
-      const online = navigator.onLine;
-
-      if (online && fireStore) {
-        try {
-          const docSnap = await getDocFromServer(doc(fireStore, 'licenseKeys', info.keyId));
-          if (!docSnap.exists()) {
-            await clearLocalLicense();
-            setLicenseInfo(null);
-            setLicenseState('missing');
-            return;
-          }
-          const data = docSnap.data();
-          if (data.isUsed === false || data.usedByDeviceId !== info.deviceId) {
-            await clearLocalLicense();
-            setLicenseInfo(null);
-            setLicenseState('missing');
-            return;
-          }
-
-          const updated = await saveLocalLicense(
-            info.keyId,
-            info.restaurantId,
-            info.expiresAt,
-            true,
-            info.deviceId,
-            Date.now()
-          );
-          setLicenseInfo(updated);
-        } catch (e) {
-          console.error("Online license fetch failed, falling back to offline check:", e);
-          runOfflineValidation(info, now);
-          return;
-        }
-      } else {
-        runOfflineValidation(info, now);
-        return;
-      }
-
-      if (calculatedDaysLeft <= 10) {
-        setLicenseState('warning');
-      } else {
-        setLicenseState('active');
-      }
-    } catch (err) {
-      console.error("License check crashed:", err);
-      setLicenseState('missing');
     }
-  };
 
-  const runOfflineValidation = (info: any, now: number) => {
-    const daysSinceLastValidation = (now - info.lastValidatedAt) / 86400000;
-    if (daysSinceLastValidation > 14) {
-      setLicenseState('offline_expired');
+    const expiry = new Date(settings.licenseExpiry);
+    const today = new Date();
+    const diffTime = expiry.getTime() - today.getTime();
+    const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (daysLeft > 0) {
+        setLicenseStatus('active');
+        setLicenseDaysLeft(daysLeft);
     } else {
-      const msLeft = info.expiresAt - now;
-      const dLeft = Math.ceil(msLeft / 86450000);
-      if (dLeft <= 10) {
-        setLicenseState('warning');
-      } else {
-        setLicenseState('active');
-      }
+        setLicenseStatus('locked'); // App is now locked
+        setLicenseDaysLeft(0);
     }
   };
 
   useEffect(() => {
-    checkLicense();
-    window.addEventListener('license-updated', checkLicense);
-    return () => window.removeEventListener('license-updated', checkLicense);
-  }, []);
-
-  const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    let formatted = '';
-    for (let i = 0; i < value.length; i++) {
-      if (i > 0 && i % 5 === 0) {
-        formatted += '-';
-      }
-      formatted += value[i];
-    }
-    setActivationKey(formatted.slice(0, 29));
-  };
-
-  const handleActivate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActivationError(null);
-    setActivationSuccess(null);
-
-    if (!activationKey.trim()) {
-      setActivationError("Please enter a license key.");
-      return;
-    }
-
-    setIsActivating(true);
-    try {
-      const res = await activateLicenseKey(activationKey);
-      if (res.success) {
-        setActivationSuccess("License activated successfully! Relax while we load the system...");
-        setActivationKey('');
-        await checkLicense();
-      } else {
-        if (res.reason && (res.reason.includes("Invalid license signature") || res.reason.includes("parsing payload") || res.reason.includes("signature verification") || res.reason.includes("Invalid license key"))) {
-          setActivationError("Invalid license key. Please check and try again.");
-        } else if (res.reason && res.reason.includes("already been used on another device")) {
-          setActivationError("This key is already used on another device.");
-        } else {
-          setActivationError(res.reason || "Invalid license key. Please check and try again.");
-        }
-      }
-    } catch (err) {
-      setActivationError(err instanceof Error ? err.message : "Activation failed");
-    } finally {
-      setIsActivating(false);
-    }
-  };
+    checkLicenseStatus(settings);
+  }, [settings?.licenseExpiry]);
 
   useEffect(() => {
     init();
@@ -577,7 +447,7 @@ export default function App() {
     };
   }, [isMobileMode]);
 
-  if (isLoading || licenseState === 'checking') {
+  if (isLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-bg-app">
         <div className="flex flex-col items-center gap-4">
@@ -586,173 +456,6 @@ export default function App() {
           </div>
           <div className="text-text-primary font-mono text-[10px] tracking-[0.5em] animate-pulse uppercase">
             Initializing System...
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (licenseState === 'missing') {
-    const activeDeviceId = getOrCreateDeviceId();
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-bg-app overflow-y-auto p-4 select-none">
-        <div className="w-full max-w-xl bg-bg-surface border border-border-light rounded-2xl p-8 md:p-12 shadow-xl space-y-8">
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-accent/20">
-              LB
-            </div>
-            <div>
-              <h2 className="text-xl font-bold uppercase tracking-tight text-text-primary">License Key Required</h2>
-              <p className="text-text-muted text-xs font-medium uppercase tracking-wider mt-1">Activate POS Station to Continue</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleActivate} className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-text-placeholder uppercase tracking-wider block text-center">
-                Enter Activation License Key
-              </label>
-              <input
-                type="text"
-                value={activationKey}
-                onChange={handleKeyChange}
-                placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
-                className="w-full h-14 bg-bg-surface-2 border-2 border-border-light rounded-xl px-5 text-xl font-mono font-bold tracking-widest text-text-primary focus:border-accent outline-none placeholder:text-text-placeholder text-center uppercase"
-                disabled={isActivating}
-                required
-              />
-            </div>
-
-            {activationError && (
-              <div className="p-4 bg-danger-light border border-danger-border rounded-xl text-danger font-bold text-xs leading-relaxed uppercase tracking-wide text-center">
-                ⚠️ {activationError}
-              </div>
-            )}
-
-            {activationSuccess && (
-              <div className="p-4 bg-success-light border border-success-border rounded-xl text-success font-bold text-xs leading-relaxed uppercase tracking-wide text-center">
-                ✅ {activationSuccess}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={isActivating}
-              className="w-full btn-primary h-14 text-xs font-bold uppercase tracking-widest shadow-lg flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-            >
-              <Key className="w-4 h-4" />
-              {isActivating ? 'Verifying Activation...' : 'Activate Station'}
-            </button>
-          </form>
-
-          <div className="border-t border-border-light pt-6 space-y-4">
-            <div className="flex flex-col items-center">
-              <span className="text-[9px] font-bold text-text-placeholder uppercase tracking-widest mb-1">Station Device Identification</span>
-              <div className="flex items-center gap-2 max-w-full">
-                <div className="font-mono text-[10px] font-bold text-text-secondary px-3 py-1.5 bg-bg-surface-2 border border-border-light rounded-md truncate max-w-full font-bold">
-                  {activeDeviceId}
-                </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(activeDeviceId);
-                    toast.success("Device ID copied to clipboard!");
-                  }}
-                  className="p-1.5 border border-border-light bg-bg-surface-2 text-text-muted hover:text-text-primary rounded-md transition-all active:scale-95"
-                  title="Copy Device ID"
-                  type="button"
-                >
-                  <Copy className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (licenseState === 'expired' || licenseState === 'offline_expired') {
-    const activeDeviceId = getOrCreateDeviceId();
-    const isOfflineExp = licenseState === 'offline_expired';
-    
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-bg-app p-4 select-none">
-        <div className="w-full max-w-xl bg-bg-surface border-2 border-danger-border rounded-2xl p-8 md:p-12 shadow-2xl space-y-8">
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center border border-danger shadow-lg shadow-danger/10 animate-pulse">
-              <Lock className="w-8 h-8" />
-            </div>
-            <div>
-              <h2 className="text-xl font-extrabold uppercase tracking-tight text-text-primary">
-                {isOfflineExp ? 'Security Audit Halt' : 'License Terminated'}
-              </h2>
-              <p className="text-danger font-bold text-xs uppercase tracking-widest mt-1">
-                {isOfflineExp ? 'Connection Sync Required' : 'Access Suspended'}
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-bg-surface-2 border border-border-light rounded-xl p-6 space-y-4 text-center">
-            {isOfflineExp ? (
-              <p className="text-text-secondary font-bold text-xs uppercase tracking-wide leading-relaxed">
-                Cannot verify license authenticity. Please connect this device to the internet to authorize systems and continue.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-text-secondary font-bold text-xs uppercase tracking-wide leading-relaxed">
-                  Your system license has expired. Please contact your software provider to renew and reinstate POS operations.
-                </p>
-                {licenseInfo && (
-                  <p className="text-text-placeholder font-mono text-[10px] uppercase font-bold">
-                    Expiration Date: {format(new Date(licenseInfo.expiresAt), 'dd MMM yyyy HH:mm')}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-border-light pt-6 flex flex-col items-center space-y-4">
-            <div className="grid grid-cols-2 gap-4 w-full text-center">
-              <div>
-                <span className="text-[9px] font-black text-text-placeholder uppercase tracking-widest block mb-1">Restaurant ID</span>
-                <span className="font-mono text-xs font-bold text-text-primary">{licenseInfo?.restaurantId || 'N/A'}</span>
-              </div>
-              <div>
-                <span className="text-[9px] font-black text-text-placeholder uppercase tracking-widest block mb-1">State Code</span>
-                <span className="font-mono text-xs font-bold text-text-primary">{licenseState.toUpperCase()}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center w-full">
-              <span className="text-[9px] font-bold text-text-placeholder uppercase tracking-widest mb-1">Device ID Code</span>
-              <div className="flex items-center gap-2 max-w-full">
-                <div className="font-mono text-[10px] font-bold text-text-secondary px-3 py-1.5 bg-bg-surface-2 border border-border-light rounded-md truncate max-w-full">
-                  {activeDeviceId}
-                </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(activeDeviceId);
-                    toast.success("Device ID copied to clipboard!");
-                  }}
-                  className="p-1.5 border border-border-light bg-bg-surface-2 text-text-muted hover:text-text-primary rounded-md transition-all active:scale-95"
-                  title="Copy Device ID"
-                  type="button"
-                >
-                  <Copy className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-
-            {isOfflineExp && (
-              <button
-                onClick={checkLicense}
-                className="w-full btn-primary h-12 text-xs font-bold uppercase tracking-widest shadow-md flex items-center justify-center gap-2 active:scale-95 mt-4"
-                type="button"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Retry Validation Sync
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -768,9 +471,18 @@ export default function App() {
     );
   }
 
+  if (licenseStatus === 'locked') {
+    return (
+      <div className="h-screen w-screen bg-bg-app overflow-hidden">
+        <LicenseLockScreen />
+        <Toaster position="top-right" theme="light" richColors />
+      </div>
+    );
+  }
+
   return (
     <Router>
-      <div className="flex h-screen overflow-hidden bg-bg-app relative animate-fade-in">
+      <div className="flex h-screen overflow-hidden bg-bg-app relative">
         {/* Mobile Backdrop */}
         <AnimatePresence>
           {isMobileMode && isOverlayOpen && (
@@ -798,26 +510,6 @@ export default function App() {
           className="flex-1 flex flex-col min-w-0 h-full overflow-hidden transition-all duration-250 ease-in-out"
           style={{ width: '100%' }}
         >
-          {/* Expiring Warning Banner */}
-          {!licenseWarningDismissed && licenseState === 'warning' && (
-            <div className="bg-warning text-text-primary px-6 py-3 flex items-center justify-between shadow-md border-b border-warning-border/40 shrink-0 select-none animate-slide-down">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="w-4 h-4 text-text-primary shrink-0 animate-bounce" />
-                <span className="text-[11px] font-extrabold uppercase tracking-wide">
-                  ⚠️ License expires in {daysLeft} days. Go to <Link to="/settings" className="underline hover:text-text-secondary transition-colors font-black">Settings → License</Link> to renew.
-                </span>
-              </div>
-              <button 
-                onClick={() => setLicenseWarningDismissed(true)}
-                className="text-text-primary/70 hover:text-text-primary p-1 hover:bg-black/5 rounded-full transition-all active:scale-95"
-                title="Dismiss warning"
-                type="button"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
           <TopBar 
             isSidebarOpen={isOverlayOpen} 
             onToggleSidebar={toggleSidebar} 

@@ -225,7 +225,7 @@ export default function Records() {
             <div className="card-main p-6 border-l-4 border-l-orange-500">
               <div className="flex items-center gap-3 mb-2">
                 <Truck className="w-4 h-4 text-orange-500" />
-                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Logistics Fees</span>
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Collected Delivery Charges</span>
               </div>
               <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
                 {settings.currency}{(todayStats?.deliveryFees || 0).toFixed(2)}
