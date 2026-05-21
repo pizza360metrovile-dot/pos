@@ -124,7 +124,30 @@ interface StoreState {
   // Data Export/Import
   exportData: () => Promise<string>;
   importData: (json: string) => Promise<void>;
+
+  // Global Dialog states
+  confirmModal: ConfirmModalState | null;
+  promptModal: PromptModalState | null;
 }
+
+export interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  isDanger: boolean;
+  resolve: (value: boolean) => void;
+}
+
+export interface PromptModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  defaultValue: string;
+  resolve: (value: string | null) => void;
+}
+
 
 const DEFAULT_SETTINGS: RestaurantSettings = {
   name: 'LUX BISTRO',
@@ -190,6 +213,8 @@ export const useStore = create<StoreState>((set, get) => ({
   lastAction: Date.now(),
   sidebarState: 'expanded',
   subscription: null,
+  confirmModal: null,
+  promptModal: null,
 
   // POS Initial State
   cart: [],
@@ -1062,3 +1087,44 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
 }));
+
+export const showConfirmModal = (options: {
+  title?: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  isDanger?: boolean;
+}): Promise<boolean> => {
+  return new Promise((resolve) => {
+    useStore.setState({
+      confirmModal: {
+        isOpen: true,
+        title: options.title || 'Confirm',
+        message: options.message,
+        confirmLabel: options.confirmLabel || 'Confirm',
+        cancelLabel: options.cancelLabel || 'Cancel',
+        isDanger: !!options.isDanger,
+        resolve,
+      }
+    });
+  });
+};
+
+export const showPromptModal = (options: {
+  title?: string;
+  message: string;
+  defaultValue?: string;
+}): Promise<string | null> => {
+  return new Promise((resolve) => {
+    useStore.setState({
+      promptModal: {
+        isOpen: true,
+        title: options.title || 'Prompt',
+        message: options.message,
+        defaultValue: options.defaultValue || '',
+        resolve,
+      }
+    });
+  });
+};
+

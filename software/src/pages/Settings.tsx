@@ -20,7 +20,8 @@ import {
   Check,
   Key
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, showConfirmModal } from '../store/useStore';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -214,23 +215,46 @@ export default function Settings() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
+    const handleScroll = () => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const scrollPosition = container.scrollTop;
+      const maxScroll = container.scrollHeight - container.clientHeight;
+
+      // If we are scrolled all the way/almost to the bottom, active section should be the last one
+      if (maxScroll > 0 && scrollPosition >= maxScroll - 60) {
+        setActiveSection(SECTIONS[SECTIONS.length - 1].id);
+        return;
+      }
+
+      let active = SECTIONS[0].id;
+      for (let i = SECTIONS.length - 1; i >= 0; i--) {
+        const section = SECTIONS[i];
+        const el = document.getElementById(section.id);
+        if (el) {
+          // Adjust threshold margin to account for padding/headers
+          if (scrollPosition >= el.offsetTop - 140) {
+            active = section.id;
+            break;
           }
-        });
-      },
-      { threshold: 0.2, rootMargin: '-10% 0px -80% 0px' }
-    );
+        }
+      }
+      setActiveSection(active);
+    };
 
-    SECTIONS.forEach((section) => {
-      const el = document.getElementById(section.id);
-      if (el) observer.observe(el);
-    });
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll, { passive: true });
+      // Run once initially to set the correct active state based on current scroll
+      handleScroll();
+    }
 
-    return () => observer.disconnect();
+    return () => {
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
+    };
   }, []);
 
   const handleSave = async (sectionId: string) => {
@@ -242,6 +266,7 @@ export default function Settings() {
   };
 
   const scrollToSection = (id: string) => {
+    setActiveSection(id);
     const el = document.getElementById(id);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth' });
@@ -268,7 +293,7 @@ export default function Settings() {
         await importData(json);
         window.location.reload();
       } catch (err) {
-        alert('Failed to import data. Please check the file format.');
+        toast.error('Failed to import data. Please check the file format.');
       }
     };
     reader.readAsText(importFile);
@@ -277,11 +302,11 @@ export default function Settings() {
   const onPasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passwords.new !== passwords.confirm) {
-      alert('Passwords do not match');
+      toast.error('Passwords do not match');
       return;
     }
     if (passwords.new.length < 8) {
-      alert('Password must be at least 8 characters');
+      toast.error('Password must be at least 8 characters');
       return;
     }
     setPassStatus('loading');
@@ -875,8 +900,15 @@ export default function Settings() {
 
           <div className="mt-12 pt-12 border-t border-border-light flex flex-col items-center gap-6">
              <button 
-              onClick={() => {
-                if(window.confirm('Terminate local session and disconnect matrix?')) { logout(); }
+              onClick={async () => {
+                const confirmed = await showConfirmModal({
+                  title: 'Terminate Session',
+                  message: 'Terminate local session and disconnect matrix?',
+                  confirmLabel: 'Sign Out',
+                  cancelLabel: 'Cancel',
+                  isDanger: true
+                });
+                if (confirmed) { logout(); }
               }}
               className="px-12 py-5 bg-danger-light text-danger border border-danger-border rounded-xl flex items-center gap-4 transition-all hover:bg-danger hover:text-white group font-bold pointer-events-auto cursor-pointer relative z-10"
              >

@@ -8,7 +8,7 @@ import {
   Plus, Edit2, Trash2, Tag, Utensils, X, Save, AlertCircle, 
   ChefHat, Package, LayoutGrid, ListChecks, GripVertical, Settings2 
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, showConfirmModal } from '../store/useStore';
 import { MenuItem, Category, ModifierGroup, ModifierOption } from '../types';
 import { toast } from 'sonner';
 import { clsx } from 'clsx';
@@ -153,7 +153,14 @@ export default function MenuManagement() {
         } else {
           warning = "Items in this category will now track direct stock. Set stock quantities for each item after saving.";
         }
-        if (!window.confirm(warning)) return;
+        const confirmed = await showConfirmModal({
+          title: 'Change Category Type',
+          message: warning,
+          confirmLabel: 'Continue',
+          cancelLabel: 'Cancel',
+          isDanger: false
+        });
+        if (!confirmed) return;
       }
       await updateCategory({ ...editingCategory, ...catFormData });
     } else {
@@ -193,19 +200,41 @@ export default function MenuManagement() {
   };
 
   const handleDeleteItem = async (id: string | number) => {
-    if (window.confirm('Are you sure you want to delete this menu item?')) {
+    const confirmed = await showConfirmModal({
+      title: 'Delete Menu Item',
+      message: 'Are you sure you want to delete this menu item?',
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      isDanger: true
+    });
+    if (confirmed) {
       await deleteMenuItem(id);
     }
   };
 
   const handleDeleteCategory = async (id: string | number) => {
-    if (window.confirm('Deleting a category will NOT delete the items in it, but they will become uncategorized. Proceed?')) {
+    const confirmed = await showConfirmModal({
+      title: 'Delete Category',
+      message: 'Deleting a category will NOT delete the items in it, but they will become uncategorized. Proceed?',
+      confirmLabel: 'Delete Category',
+      cancelLabel: 'Cancel',
+      isDanger: true
+    });
+    if (confirmed) {
       await deleteCategory(id);
     }
   };
 
   const handleDeleteModGroup = async (group: ModifierGroup) => {
-    if (window.confirm(`Delete ${group.name}? This modifier will no longer appear when ordering items in ${categories.find(c => String(c.id) === String(group.categoryId))?.name}.`)) {
+    const categoryName = categories.find(c => String(c.id) === String(group.categoryId))?.name || '';
+    const confirmed = await showConfirmModal({
+      title: 'Delete Modifier Group',
+      message: `Delete ${group.name}? This modifier will no longer appear when ordering items in ${categoryName}.`,
+      confirmLabel: 'Delete Modifier Group',
+      cancelLabel: 'Cancel',
+      isDanger: true
+    });
+    if (confirmed) {
       await deleteModifierGroup(group.id);
     }
   };

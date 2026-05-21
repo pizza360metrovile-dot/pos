@@ -467,6 +467,7 @@ export default function App() {
       <div className="h-screen w-screen bg-bg-app overflow-hidden">
         <Login />
         <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
       </div>
     );
   }
@@ -476,6 +477,7 @@ export default function App() {
       <div className="h-screen w-screen bg-bg-app overflow-hidden">
         <LicenseLockScreen />
         <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
       </div>
     );
   }
@@ -528,6 +530,184 @@ export default function App() {
         </div>
       </div>
       <Toaster position="top-right" theme="light" richColors />
+      <GlobalModals />
     </Router>
   );
 }
+
+function GlobalModals() {
+  const confirmModalState = useStore(state => state.confirmModal);
+  const promptModalState = useStore(state => state.promptModal);
+  const [promptInputValue, setPromptInputValue] = useState('');
+
+  useEffect(() => {
+    if (promptModalState) {
+      setPromptInputValue(promptModalState.defaultValue || '');
+    }
+  }, [promptModalState]);
+
+  const handleConfirmCancel = () => {
+    if (confirmModalState) {
+      confirmModalState.resolve(false);
+      useStore.setState({ confirmModal: null });
+    }
+  };
+
+  const handleConfirmAccept = () => {
+    if (confirmModalState) {
+      confirmModalState.resolve(true);
+      useStore.setState({ confirmModal: null });
+    }
+  };
+
+  const handlePromptCancel = () => {
+    if (promptModalState) {
+      promptModalState.resolve(null);
+      useStore.setState({ promptModal: null });
+    }
+  };
+
+  const handlePromptAccept = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (promptModalState) {
+      promptModalState.resolve(promptInputValue);
+      useStore.setState({ promptModal: null });
+    }
+  };
+
+  return (
+    <>
+      <AnimatePresence>
+        {confirmModalState && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handleConfirmCancel}
+              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
+            />
+            
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', duration: 0.4 }}
+              className="relative w-full max-w-md bg-bg-surface border border-border-light rounded-2xl p-6 shadow-modal z-10"
+            >
+              <div className="flex items-start gap-4 mb-5">
+                <div className={cn(
+                  "p-3 rounded-xl flex-shrink-0",
+                  confirmModalState.isDanger 
+                    ? "bg-danger/10 text-danger border border-danger/20" 
+                    : "bg-accent/10 text-accent border border-accent/20"
+                )}>
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-extrabold tracking-tight text-text-primary uppercase">
+                    {confirmModalState.title}
+                  </h3>
+                  <p className="text-xs text-text-muted leading-relaxed font-medium">
+                    {confirmModalState.message}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-border-light">
+                <button
+                  type="button"
+                  onClick={handleConfirmCancel}
+                  className="px-5 py-3 rounded-lg font-bold uppercase text-[10px] tracking-widest text-text-secondary hover:bg-bg-surface-2 transition active:scale-95 cursor-pointer pointer-events-auto"
+                >
+                  {confirmModalState.cancelLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmAccept}
+                  className={cn(
+                    "px-6 py-3 rounded-lg font-bold uppercase text-[10px] tracking-widest text-white transition active:scale-95 shadow-md cursor-pointer pointer-events-auto",
+                    confirmModalState.isDanger 
+                      ? "bg-danger hover:bg-danger/90 shadow-danger/10" 
+                      : "bg-accent hover:bg-accent/90 shadow-accent/10"
+                  )}
+                >
+                  {confirmModalState.confirmLabel}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {promptModalState && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handlePromptCancel}
+              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
+            />
+            
+            {/* Modal Body */}
+            <motion.form
+              onSubmit={handlePromptAccept}
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', duration: 0.4 }}
+              className="relative w-full max-w-md bg-bg-surface border border-border-light rounded-2xl p-6 shadow-modal z-10 space-y-5"
+            >
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-accent/10 text-accent border border-accent/20 rounded-xl flex-shrink-0">
+                  <Circle className="w-6 h-6 text-accent animate-pulse" />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <h3 className="text-base font-extrabold tracking-tight text-text-primary uppercase">
+                    {promptModalState.title}
+                  </h3>
+                  <label htmlFor="promptInput" className="text-xs text-text-muted leading-relaxed font-medium block">
+                    {promptModalState.message}
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <input
+                  id="promptInput"
+                  type="text"
+                  autoFocus
+                  value={promptInputValue}
+                  onChange={(e) => setPromptInputValue(e.target.value)}
+                  className="w-full bg-bg-surface-2 border border-border-light rounded-xl px-4 py-3.5 text-xs text-text-primary placeholder-text-placeholder focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/30 transition pointer-events-auto"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-border-light">
+                <button
+                  type="button"
+                  onClick={handlePromptCancel}
+                  className="px-5 py-3 rounded-lg font-bold uppercase text-[10px] tracking-widest text-text-secondary hover:bg-bg-surface-2 transition active:scale-95 cursor-pointer pointer-events-auto"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-bold uppercase text-[10px] tracking-widest transition active:scale-95 shadow-md shadow-accent/10 cursor-pointer pointer-events-auto"
+                >
+                  Submit
+                </button>
+              </div>
+            </motion.form>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+

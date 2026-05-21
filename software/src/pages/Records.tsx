@@ -26,7 +26,7 @@ import {
   RotateCcw,
   AlertCircle
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, showConfirmModal } from '../store/useStore';
 import { Order, OrderType, OrderItem } from '../types';
 import { clsx } from 'clsx';
 import { toast } from 'sonner';
@@ -53,17 +53,124 @@ export default function Records() {
   const [currentPage, setCurrentPage] = useState(1);
   const [retrievalConfirmData, setRetrievalConfirmData] = useState<Order | null>(null);
 
-  const todayStats = useMemo(() => {
-    const todayOrders = orders.filter(o => isToday(new Date(o.createdAt)) && o.status === 'completed');
-    const revenue = todayOrders.reduce((acc, o) => acc + o.total, 0);
-    const deliveryFees = todayOrders.reduce((acc, o) => acc + (o.deliveryCharge || 0), 0);
-    const count = todayOrders.length;
-    const avg = count > 0 ? revenue / count : 0;
-    return { revenue, count, avg, deliveryFees };
-  }, [orders]);
+  // Date range filter states
+  const [selectedRange, setSelectedRange] = useState<'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'all' | 'custom'>('today');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
+
+  const handleCustomStartChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCustomStart(e.target.value);
+    setSelectedRange('custom');
+    setCurrentPage(1);
+  };
+
+  const handleCustomEndChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCustomEnd(e.target.value);
+    setSelectedRange('custom');
+    setCurrentPage(1);
+  };
+
+  const selectQuickRange = (range: 'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'all') => {
+    setSelectedRange(range);
+    setCurrentPage(1);
+  };
+
+  // Compute calculated date boundaries based on choice
+  const dateBounds = useMemo(() => {
+    const now = new Date();
+    
+    if (selectedRange === 'today') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    if (selectedRange === 'yesterday') {
+      const yesterday = new Date(now);
+      yesterday.setDate(now.getDate() - 1);
+      const start = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
+      const end = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    if (selectedRange === 'week') {
+      const currentDay = now.getDay();
+      const gap = currentDay === 0 ? 6 : currentDay - 1;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - gap);
+      const start = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    if (selectedRange === 'month') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    if (selectedRange === 'last-month') {
+      const firstOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const lastOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { start: firstOfLastMonth, end: lastOfLastMonth };
+    }
+    if (selectedRange === 'custom') {
+      const start = customStart ? new Date(`${customStart}T00:00:00`) : null;
+      const end = customEnd ? new Date(`${customEnd}T23:59:59.999`) : null;
+      return { start, end };
+    }
+    
+    return { start: null, end: null };
+  }, [selectedRange, customStart, customEnd]);
+
+  // Keep date-filtered orders for calculations
+  const rangeOrders = useMemo(() => {
+    return orders.filter(order => {
+      const orderDate = order.createdAt;
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+      return true;
+    });
+  }, [orders, dateBounds]);
+
+  // Calculations derived dynamically from selected range
+  const rangeStats = useMemo(() => {
+    const totalOrders = rangeOrders.length;
+    const totalRevenue = rangeOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    const totalTax = rangeOrders.reduce((sum, o) => sum + (o.taxAmount || 0), 0);
+    const totalDeliveryCharges = rangeOrders.reduce((sum, o) => sum + (o.deliveryCharge || 0), 0);
+
+    // Top selling item by quantity sold
+    const itemQuantities: { [name: string]: number } = {};
+    rangeOrders.forEach(order => {
+      order.items.forEach(it => {
+        const name = it.name;
+        itemQuantities[name] = (itemQuantities[name] || 0) + (it.quantity || 0);
+      });
+    });
+
+    let topItemName = '';
+    let topItemQty = 0;
+    Object.entries(itemQuantities).forEach(([name, qty]) => {
+      if (qty > topItemQty) {
+        topItemQty = qty;
+        topItemName = name;
+      }
+    });
+
+    return {
+      totalOrders,
+      totalRevenue,
+      averageOrderValue,
+      totalTax,
+      totalDeliveryCharges,
+      topItem: topItemQty > 0 ? { name: topItemName, quantity: topItemQty } : null
+    };
+  }, [rangeOrders]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
+      const orderDate = order.createdAt;
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+
       const matchesSearch = 
         order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (order.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -71,7 +178,7 @@ export default function Records() {
       const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
       return matchesSearch && matchesType && matchesStatus;
     });
-  }, [orders, searchTerm, selectedType, selectedStatus]);
+  }, [orders, searchTerm, selectedType, selectedStatus, dateBounds]);
 
   const totalPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE);
   const paginatedOrders = useMemo(() => {
@@ -81,7 +188,14 @@ export default function Records() {
 
   const handleDeleteRecord = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this record? This action will be logged.')) {
+    const confirmed = await showConfirmModal({
+      title: 'Delete Record',
+      message: 'Are you sure you want to delete this record? This action will be logged.',
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      isDanger: true
+    });
+    if (confirmed) {
       await deleteOrder(id);
       if (selectedOrder?.id === id) setSelectedOrder(null);
     }
@@ -124,7 +238,14 @@ export default function Records() {
   };
 
   const handleCancelHeldOrder = async (id: string, orderNumber: string) => {
-    if (window.confirm(`Cancel this held order #${orderNumber}? This cannot be undone.`)) {
+    const confirmed = await showConfirmModal({
+      title: 'Cancel Held Order',
+      message: `Cancel this held order #${orderNumber}? This cannot be undone.`,
+      confirmLabel: 'Cancel Order',
+      cancelLabel: 'Keep',
+      isDanger: true
+    });
+    if (confirmed) {
       await storeCancelHeldOrder(id);
       if (selectedOrder?.id === id) setSelectedOrder(null);
       toast.success(`Order #${orderNumber} cancelled`);
@@ -195,42 +316,157 @@ export default function Records() {
             </div>
           </div>
 
-          {/* Today's Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+          {/* Date Range Filter Bar */}
+          <div className="bg-bg-surface border border-border-light rounded-xl p-4 mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm">
+            {/* Quick Range Pills */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest mr-2 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> Period:
+              </span>
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'week', label: 'This Week' },
+                { id: 'month', label: 'This Month' },
+                { id: 'last-month', label: 'Last Month' },
+                { id: 'all', label: 'All Time' },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  onClick={() => selectQuickRange(pill.id as any)}
+                  className={clsx(
+                    "px-4 py-2 rounded-lg text-[10px] font-extrabold uppercase tracking-widest transition-all cursor-pointer border",
+                    selectedRange === pill.id
+                      ? "bg-accent border-accent text-white shadow-sm font-black"
+                      : "bg-bg-surface-2 border-border-light text-text-muted hover:text-text-secondary hover:bg-bg-surface-2/80"
+                  )}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Custom Range Date Pickers */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={clsx(
+                "text-[11px] font-bold uppercase tracking-widest transition-colors",
+                selectedRange === 'custom' ? "text-accent" : "text-text-muted"
+              )}>
+                Custom:
+              </span>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={customStart}
+                    onChange={handleCustomStartChange}
+                    className={clsx(
+                      "px-3 py-1.5 text-[11px] font-mono font-bold bg-bg-surface-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all pointer-events-auto cursor-pointer",
+                      selectedRange === 'custom' ? "border-accent/50 text-text-primary" : "border-border-light text-text-muted"
+                    )}
+                  />
+                </div>
+                <span className="text-text-muted text-xs font-bold uppercase tracking-widest">to</span>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={customEnd}
+                    onChange={handleCustomEndChange}
+                    className={clsx(
+                      "px-3 py-1.5 text-[11px] font-mono font-bold bg-bg-surface-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all pointer-events-auto cursor-pointer",
+                      selectedRange === 'custom' ? "border-accent/50 text-text-primary" : "border-border-light text-text-muted"
+                    )}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Recalculating Stats Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-10">
+            {/* Total Revenue */}
             <div className="card-main p-6 border-l-4 border-l-success">
               <div className="flex items-center gap-3 mb-2">
                 <TrendingUp className="w-4 h-4 text-success" />
-                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">System Yield</span>
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Total Revenue</span>
               </div>
               <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
-                {settings.currency}{todayStats.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {settings.currency}{rangeStats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </div>
             </div>
+
+            {/* Total Orders */}
             <div className="card-main p-6 border-l-4 border-l-accent">
               <div className="flex items-center gap-3 mb-2">
                 <ShoppingBag className="w-4 h-4 text-accent" />
-                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Load Count</span>
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Total Orders</span>
               </div>
-              <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">{todayStats.count}</div>
+              <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
+                {rangeStats.totalOrders}
+              </div>
             </div>
+
+            {/* Average Order Value */}
             <div className="card-main p-6 border-l-4 border-l-warning">
               <div className="flex items-center gap-3 mb-2">
                 <ArrowUpRight className="w-4 h-4 text-warning" />
-                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Mean Transaction</span>
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">AOV (Mean)</span>
               </div>
               <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
-                {settings.currency}{(todayStats?.avg || 0).toFixed(2)}
+                {settings.currency}{rangeStats.averageOrderValue.toFixed(2)}
               </div>
             </div>
-            <div className="card-main p-6 border-l-4 border-l-orange-500">
+
+            {/* Total Tax Collected */}
+            <div className="card-main p-6 border-l-4 border-l-purple-500">
               <div className="flex items-center gap-3 mb-2">
-                <Truck className="w-4 h-4 text-orange-500" />
-                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Collected Delivery Charges</span>
+                <FileText className="w-4 h-4 text-purple-500" />
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Tax Collected</span>
               </div>
               <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
-                {settings.currency}{(todayStats?.deliveryFees || 0).toFixed(2)}
+                {settings.currency}{rangeStats.totalTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </div>
             </div>
+
+            {/* Total Delivery Charges (only if > 0) */}
+            {rangeStats.totalDeliveryCharges > 0 && (
+              <div className="card-main p-6 border-l-4 border-l-orange-500">
+                <div className="flex items-center gap-3 mb-2">
+                  <Truck className="w-4 h-4 text-orange-500" />
+                  <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Delivery Charges</span>
+                </div>
+                <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
+                  {settings.currency}{rangeStats.totalDeliveryCharges.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            )}
+
+            {/* Top Selling Item */}
+            <div className="card-main p-6 border-l-4 border-l-teal-500">
+              <div className="flex items-center gap-3 mb-2">
+                <Check className="w-4 h-4 text-teal-500" />
+                <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Top Selling Item</span>
+              </div>
+              {rangeStats.topItem ? (
+                <div>
+                  <div className="text-base font-extrabold text-text-primary uppercase truncate" title={rangeStats.topItem.name}>
+                    {rangeStats.topItem.name}
+                  </div>
+                  <div className="text-[11px] font-mono text-text-muted font-bold uppercase tracking-wider mt-0.5">
+                    Sold: {rangeStats.topItem.quantity} units
+                  </div>
+                </div>
+              ) : (
+                <div className="text-2xl font-extrabold text-text-muted font-mono tracking-tighter">—</div>
+              )}
+            </div>
+          </div>
+
+          {/* Showing Record Count */}
+          <div className="flex items-center mb-4 px-1">
+            <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest">
+              Showing {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'}
+            </span>
           </div>
 
           <div className="flex flex-col md:flex-row gap-6 mb-6">
@@ -277,71 +513,84 @@ export default function Records() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-light">
-                {paginatedOrders.map(order => (
-                  <tr 
-                    key={order.id} 
-                    onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
-                    className={clsx(
-                      "hover:bg-bg-surface-2 cursor-pointer transition-colors group h-[56px] min-h-[56px] border-b border-border-light",
-                      selectedOrder?.id === order.id && "bg-bg-surface-2"
-                    )}
-                  >
-                    <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '80px', minWidth: '80px' }}>
-                      {order.orderNumber}
-                    </td>
-                    <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '150px', minWidth: '150px' }}>
-                      <div className="flex flex-col">
-                        <span className="font-bold">{format(order.createdAt, 'HH:mm')}</span>
-                        <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{format(order.createdAt, 'dd MMM yy')}</span>
-                      </div>
-                    </td>
-                    <td className="p-[14px_16px] text-[14px] text-text-primary font-bold uppercase tracking-tight truncate max-w-[140px]" style={{ width: '140px', minWidth: '140px' }} title={order.customerName || ''}>
-                      {order.customerName || '—'}
-                    </td>
-                    <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '100px', minWidth: '100px' }}>
-                      <span className="badge sm font-bold uppercase tracking-widest">
-                        {order.type}
-                      </span>
-                    </td>
-                    <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '60px', minWidth: '60px' }}>
-                      {order.items.reduce((acc, it) => acc + (it.quantity || 0), 0)}
-                    </td>
-                    <td className="p-[14px_16px] text-[14px] text-accent font-mono font-bold tracking-tight" style={{ width: '100px', minWidth: '100px' }}>
-                      {settings.currency}{(order.total || 0).toFixed(2)}
-                    </td>
-                    <td className="p-[14px_16px] text-[14px]" style={{ width: '110px', minWidth: '110px' }}>
-                      <div className="flex items-center gap-2">
-                        <span className={clsx(
-                          "w-2 h-2 rounded-full inline-block shadow-sm",
-                          order.status === 'completed' && "bg-success shadow-success/20",
-                          order.status === 'in-progress' && "bg-warning shadow-warning/20",
-                          order.status === 'held' && "bg-accent shadow-accent/20",
-                          order.status === 'refunded' && "bg-danger shadow-danger/20"
-                        )} />
-                        <span className={clsx(
-                          "badge sm font-bold uppercase tracking-wider",
-                          order.status === 'completed' && "badge-success",
-                          order.status === 'in-progress' && "badge-warning",
-                          order.status === 'held' && "badge-accent",
-                          order.status === 'refunded' && "badge-danger"
-                        )}>
-                          {order.status}
+                {filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-12 text-center">
+                      <div className="flex flex-col items-center justify-center space-y-3 py-12">
+                        <AlertCircle className="w-8 h-8 text-text-placeholder" />
+                        <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest">
+                          No orders in this period
                         </span>
                       </div>
                     </td>
-                    <td className="p-[14px_16px] text-right" style={{ width: '100px', minWidth: '100px' }}>
-                      <div className="flex justify-end items-center gap-2">
-                        <button 
-                          onClick={(e) => handleDeleteRecord(order.id, e)} 
-                          className="p-2 bg-danger-light border border-danger-border rounded-lg text-danger hover:bg-danger hover:text-white transition-all opacity-0 group-hover:opacity-100 shadow-sm"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                        <ChevronRight className={clsx("w-4 h-4 text-text-disabled transition-all", selectedOrder?.id === order.id ? "rotate-90 text-accent" : "group-hover:translate-x-0.5")} />
-                      </div>
-                    </td>
                   </tr>
-                ))}
+                ) : (
+                  paginatedOrders.map(order => (
+                    <tr 
+                      key={order.id} 
+                      onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
+                      className={clsx(
+                        "hover:bg-bg-surface-2 cursor-pointer transition-colors group h-[56px] min-h-[56px] border-b border-border-light",
+                        selectedOrder?.id === order.id && "bg-bg-surface-2"
+                      )}
+                    >
+                      <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '80px', minWidth: '80px' }}>
+                        {order.orderNumber}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '150px', minWidth: '150px' }}>
+                        <div className="flex flex-col">
+                          <span className="font-bold">{format(order.createdAt, 'HH:mm')}</span>
+                          <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{format(order.createdAt, 'dd MMM yy')}</span>
+                        </div>
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-text-primary font-bold uppercase tracking-tight truncate max-w-[140px]" style={{ width: '140px', minWidth: '140px' }} title={order.customerName || ''}>
+                        {order.customerName || '—'}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '100px', minWidth: '100px' }}>
+                        <span className="badge sm font-bold uppercase tracking-widest">
+                          {order.type}
+                        </span>
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '60px', minWidth: '60px' }}>
+                        {order.items.reduce((acc, it) => acc + (it.quantity || 0), 0)}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-accent font-mono font-bold tracking-tight" style={{ width: '100px', minWidth: '100px' }}>
+                        {settings.currency}{(order.total || 0).toFixed(2)}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px]" style={{ width: '110px', minWidth: '110px' }}>
+                        <div className="flex items-center gap-2">
+                          <span className={clsx(
+                            "w-2 h-2 rounded-full inline-block shadow-sm",
+                            order.status === 'completed' && "bg-success shadow-success/20",
+                            order.status === 'in-progress' && "bg-warning shadow-warning/20",
+                            order.status === 'held' && "bg-accent shadow-accent/20",
+                            order.status === 'refunded' && "bg-danger shadow-danger/20"
+                          )} />
+                          <span className={clsx(
+                            "badge sm font-bold uppercase tracking-wider",
+                            order.status === 'completed' && "badge-success",
+                            order.status === 'in-progress' && "badge-warning",
+                            order.status === 'held' && "badge-accent",
+                            order.status === 'refunded' && "badge-danger"
+                          )}>
+                            {order.status}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-[14px_16px] text-right" style={{ width: '100px', minWidth: '100px' }}>
+                        <div className="flex justify-end items-center gap-2">
+                          <button 
+                            onClick={(e) => handleDeleteRecord(order.id, e)} 
+                            className="p-2 bg-danger-light border border-danger-border rounded-lg text-danger hover:bg-danger hover:text-white transition-all opacity-0 group-hover:opacity-100 shadow-sm"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <ChevronRight className={clsx("w-4 h-4 text-text-disabled transition-all", selectedOrder?.id === order.id ? "rotate-90 text-accent" : "group-hover:translate-x-0.5")} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

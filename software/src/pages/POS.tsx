@@ -7,7 +7,7 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import { ShoppingCart, Plus, Minus, Trash2, Printer, CheckCircle, User, CreditCard, Utensils, Send, RotateCcw, X, Clock, AlertCircle, Truck, ShieldCheck, Square, CheckSquare, Edit3 } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { toast } from 'sonner';
-import { useStore } from '../store/useStore';
+import { useStore, showConfirmModal } from '../store/useStore';
 import { MenuItem, OrderType, Order, OrderItem, KotSnapshot, OrderItemModifier } from '../types';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -169,7 +169,14 @@ export default function POS() {
   const sendToKitchen = async () => {
     if (cart.length === 0) {
       if (lastSnapshot) {
-        if (!window.confirm("All items removed. Send full cancellation to kitchen?")) {
+        const confirmed = await showConfirmModal({
+          title: 'Cancel Order',
+          message: 'All items removed. Send full cancellation to kitchen?',
+          confirmLabel: 'Send Cancellation',
+          cancelLabel: 'Keep',
+          isDanger: true
+        });
+        if (!confirmed) {
           return;
         }
       } else {
@@ -302,7 +309,14 @@ export default function POS() {
   };
 
   const cancelHeldOrder = async (id: string, orderNumber: string) => {
-    if (window.confirm(`Cancel this held order #${orderNumber}? This cannot be undone.`)) {
+    const confirmed = await showConfirmModal({
+      title: 'Cancel Held Order',
+      message: `Cancel this held order #${orderNumber}? This cannot be undone.`,
+      confirmLabel: 'Cancel Order',
+      cancelLabel: 'Keep',
+      isDanger: true
+    });
+    if (confirmed) {
       await storeCancelHeldOrder(id);
       toast.success(`Order #${orderNumber} cancelled`);
     }
