@@ -381,6 +381,11 @@ export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; 
              <div className="w-16 h-1 border-b border-black"></div>
           </div>
         </div>
+
+        <div className="text-[9px] text-[#999999] text-center mt-[10px] italic">
+          <div>─────────────────────</div>
+          <div>Powered by Saynz • 0347-1887181</div>
+        </div>
       </div>
     );
   }
