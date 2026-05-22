@@ -40,9 +40,25 @@ export default function POS() {
     initialNotes?: string;
   } | null>(null);
 
+  const [kotPrintOrder, setKotPrintOrder] = useState<Order | null>(null);
+  const [kotPrintNumber, setKotPrintNumber] = useState<number>(1);
+  const [isPendingKOTPrint, setIsPendingKOTPrint] = useState(false);
+
   const receiptRef = useRef<HTMLDivElement>(null);
   const kotRef = useRef<HTMLDivElement>(null);
   const deltaKotRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (kotPrintOrder && isPendingKOTPrint) {
+      if (!kotPrintOrder.id) {
+        toast.error("Order could not be saved. Please try again.");
+        setIsPendingKOTPrint(false);
+        return;
+      }
+      handleKOTPrint();
+      setIsPendingKOTPrint(false);
+    }
+  }, [kotPrintOrder, isPendingKOTPrint]);
 
   const subtotal = useMemo(() => {
     return cart.reduce((acc, item) => {
@@ -230,22 +246,29 @@ export default function POS() {
         setActiveOrder(orderToSync);
       }
 
-      if (settings.autoPrintKOT) {
-        if (isFirstKOT) {
-          handleKOTPrint();
-        } else {
-          handleDeltaKOTPrint();
-        }
+      const orderId = orderToSync?.id;
+      if (!orderId) {
+        toast.error("Order could not be saved. Please try again.");
+        return;
       }
 
-      // Save snapshot AFTER printing to ensure print component has the correct deltas
       const kotNumber = (lastSnapshot?.kotNumber || 0) + 1;
       await addKotSnapshot({
-        orderId: orderToSync.id,
+        orderId: orderId,
         kotNumber,
         sentAt: Date.now(),
         items: JSON.parse(JSON.stringify(cart))
       });
+
+      if (settings.autoPrintKOT) {
+        if (isFirstKOT) {
+          setKotPrintOrder(orderToSync);
+          setKotPrintNumber(kotNumber);
+          setIsPendingKOTPrint(true);
+        } else {
+          handleDeltaKOTPrint();
+        }
+      }
 
       toast.success(isFirstKOT ? 'Order sent to kitchen' : 'Kitchen update sent');
     } catch (error: any) {
@@ -825,24 +848,11 @@ export default function POS() {
           )}
         </div>
         <div ref={kotRef}>
-          {(activeOrder || cart.length > 0) && (
+          {kotPrintOrder && (
             <KitchenTicket 
-              order={activeOrder || {
-                id: 'preview',
-                orderNumber: 'PREVIEW',
-                items: cart,
-                subtotal,
-                taxAmount,
-                total,
-                type: orderType,
-                customerName,
-                tableNumber,
-                status: 'pending',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-              }} 
+              order={kotPrintOrder} 
               settings={settings}
-              kotNumber={lastSnapshot?.kotNumber || 1}
+              kotNumber={kotPrintNumber}
             />
           )}
         </div>
