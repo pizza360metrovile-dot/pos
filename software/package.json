@@ -1,8 +1,10 @@
 {
-  "name": "react-example",
+  "name": "saynz-pos",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "productName": "Saynz POS",
+  "description": "Saynz POS Desktop Application",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
