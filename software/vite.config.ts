@@ -12,15 +12,6 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    sourcemap: true, // Add this for debugging
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
-      },
-    },
-  },
-  // Add this to ensure CSS is properly processed
-  css: {
-    modules: false,
+    sourcemap: false,
   },
 })

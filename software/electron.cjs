@@ -15,21 +15,20 @@ const createWindow = () => {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
-      webSecurity: false, // Add this temporarily to test
-      allowRunningInsecureContent: false,
+      // Remove webSecurity: false line
     },
     show: false,
   });
 
+  // Optional: Remove default menu
   Menu.setApplicationMenu(null);
 
-  // Always open dev tools for debugging
-  mainWindow.webContents.openDevTools();
-
+  // Load the app
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:3000');
+    mainWindow.webContents.openDevTools();
   } else {
-    // For production, use file protocol
+    // Production - load from built files
     mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
   }
 
@@ -40,11 +39,6 @@ const createWindow = () => {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-
-  // Log any loading errors
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Failed to load:', errorDescription);
-  });
 };
 
 app.whenReady().then(() => {
@@ -54,5 +48,11 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('activate', () => {
+  if (mainWindow === null) {
+    createWindow();
   }
 });
