@@ -3,7 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Restaurant License Key Generator</title>
+  <title>Restaurant License Key Generator | Admin Panel</title>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
+      }
+    }
+  </script>
 
   <style>
     * {
@@ -25,15 +34,13 @@
 
     .card {
       width: 100%;
-      max-width: 520px;
+      max-width: 620px;
       background: rgba(255, 255, 255, 0.06);
       backdrop-filter: blur(14px);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 22px;
+      border-radius: 28px;
       padding: 32px;
-      box-shadow:
-        0 10px 30px rgba(0,0,0,0.35),
-        inset 0 1px 0 rgba(255,255,255,0.05);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
     }
 
     .title {
@@ -63,7 +70,7 @@
       font-weight: 600;
     }
 
-    input {
+    input, .modal-input {
       width: 100%;
       padding: 14px 16px;
       border-radius: 14px;
@@ -75,12 +82,12 @@
       transition: 0.2s;
     }
 
-    input:focus {
+    input:focus, .modal-input:focus {
       border-color: #60a5fa;
       box-shadow: 0 0 0 4px rgba(96,165,250,0.15);
     }
 
-    input::placeholder {
+    input::placeholder, .modal-input::placeholder {
       color: #94a3b8;
     }
 
@@ -139,6 +146,156 @@
       opacity: 0.95;
     }
 
+    /* Cloud Data Management Section */
+    .cloud-section {
+      margin-top: 32px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 28px;
+    }
+
+    .cloud-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .cloud-desc {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 20px;
+    }
+
+    .input-hint {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 6px;
+    }
+
+    .delete-btn {
+      background: linear-gradient(135deg, #b91c1c, #dc2626);
+      margin-top: 8px;
+      box-shadow: 0 2px 10px rgba(220,38,38,0.3);
+    }
+
+    .delete-btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(0.98);
+    }
+
+    .delete-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .progress-status {
+      margin-top: 16px;
+      background: rgba(0,0,0,0.4);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #cbd5e1;
+      font-family: monospace;
+      border-left: 3px solid #3b82f6;
+      word-break: break-word;
+    }
+
+    /* MODAL (two-step confirmation) */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      visibility: hidden;
+      opacity: 0;
+      transition: visibility 0.2s, opacity 0.2s;
+    }
+
+    .modal-overlay.active {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .modal-container {
+      background: #1e293b;
+      max-width: 500px;
+      width: 90%;
+      border-radius: 28px;
+      padding: 28px 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 25px 40px rgba(0,0,0,0.5);
+    }
+
+    .modal-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .modal-message {
+      color: #cbd5e1;
+      margin-bottom: 24px;
+      line-height: 1.5;
+      font-size: 14px;
+      white-space: pre-line;
+    }
+
+    .modal-input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      margin-bottom: 24px;
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    .modal-btn {
+      padding: 10px 20px;
+      border-radius: 40px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      transition: 0.2s;
+    }
+
+    .modal-btn-cancel {
+      background: #334155;
+      color: white;
+    }
+
+    .modal-btn-danger {
+      background: #dc2626;
+      color: white;
+    }
+
+    .modal-btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .modal-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .step-group {
+      display: block;
+    }
+
+    .step-hidden {
+      display: none;
+    }
+
     .toast {
       position: fixed;
       bottom: 30px;
@@ -154,6 +311,7 @@
       transform: translateY(20px);
       transition: all 0.3s ease;
       box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      z-index: 1100;
     }
 
     .toast.show {
@@ -167,154 +325,390 @@
       text-align: center;
       color: #94a3b8;
     }
-
-    @media (max-width: 520px) {
-      .card {
-        padding: 24px;
-      }
-
-      .title {
-        font-size: 24px;
-      }
-    }
   </style>
 </head>
 <body>
 
-  <div class="card">
-    <div class="title">License Key Generator</div>
+<div class="card">
+  <div class="title">License Key Generator</div>
+  <div class="subtitle">
+    Generate secure 6-month software license keys
+    for your restaurant POS system.
+  </div>
 
-    <div class="subtitle">
-      Generate secure 6-month software license keys
-      for your restaurant POS system.
+  <div class="field">
+    <label class="label">Restaurant Unique ID</label>
+    <input type="text" id="restaurantId" placeholder="Enter Restaurant Unique ID" />
+  </div>
+
+  <button class="btn generate-btn" id="generateBtn">Generate 6-Month Key</button>
+
+  <div class="output-container" id="outputContainer">
+    <div class="output-label">Generated License Key</div>
+    <div class="output-box" id="outputKey"></div>
+    <button class="btn copy-btn" id="copyBtn">Copy to Clipboard</button>
+  </div>
+
+  <div class="cloud-section">
+    <div class="cloud-title">🗄️ Cloud Data Management</div>
+    <div class="cloud-desc">
+      Delete all restaurant data from Firestore. Use this to reset a restaurant's cloud data completely.
+      <strong>Protected collections:</strong> appControl, licenseKeys, used_license_keys, subscriptionSettings will NEVER be deleted.
     </div>
-
     <div class="field">
-      <label class="label">Restaurant Unique ID</label>
+      <label class="label">Restaurant ID (optional)</label>
+      <input type="text" id="cloudRestaurantId" placeholder="e.g. pizza-palace-karachi" />
+      <div class="input-hint">Enter specific restaurantId to delete only that restaurant's data. Leave empty to delete ALL restaurants data.</div>
+    </div>
+    <button class="btn delete-btn" id="deleteCloudBtn">⚠️ Delete Cloud Data</button>
+    <div id="progressArea" class="progress-status">✅ Ready — Configure Firebase to enable deletion</div>
+  </div>
+  <div class="footer-note">License keys are salted &amp; hashed (SHA-256). Store safely.</div>
+</div>
 
-      <input
-        type="text"
-        id="restaurantId"
-        placeholder="Enter Restaurant Unique ID"
-      />
+<div id="deleteModal" class="modal-overlay">
+  <div class="modal-container">
+    <div id="step1Container" class="step-group">
+      <div class="modal-title">⚠️ Destructive Action</div>
+      <div class="modal-message" id="modalWarningMsg">Loading...</div>
+      <div class="modal-buttons">
+        <button class="modal-btn modal-btn-cancel" id="modalCancelStep1">Cancel</button>
+        <button class="modal-btn modal-btn-danger" id="modalProceedStep1">Proceed</button>
+      </div>
     </div>
 
-    <button class="btn generate-btn" id="generateBtn">
-      Generate 6-Month Key
-    </button>
-
-    <div class="output-container" id="outputContainer">
-      <div class="output-label">Generated License Key</div>
-
-      <div class="output-box" id="outputKey"></div>
-
-      <button class="btn copy-btn" id="copyBtn">
-        Copy to Clipboard
-      </button>
+    <div id="step2Container" class="step-group step-hidden">
+      <div class="modal-title">⚠️ Final Confirmation</div>
+      <div class="modal-message">
+        Type <strong style="color:#f87171;">DELETE</strong> in the field below to confirm permanent deletion.
+      </div>
+      <input type="text" id="confirmDeleteInput" class="modal-input" placeholder="DELETE" autocomplete="off" />
+      <div class="modal-buttons">
+        <button class="modal-btn modal-btn-cancel" id="modalCancelStep2">Cancel</button>
+        <button class="modal-btn modal-btn-danger" id="modalConfirmDeleteBtn" disabled>Confirm Delete</button>
+      </div>
     </div>
+  </div>
+</div>
 
+<div class="toast" id="toast">License key copied successfully!</div>
+
+<script type="module">
+  // ======================= FIREBASE CONFIGURATION =======================
+  const firebaseConfig = {
+    apiKey: "AIzaSyD0NoR8zrLPiKiqVA5EvfgT-7AFZYCz02g",
+    authDomain: "pizza360-metrovile.firebaseapp.com",
+    projectId: "pizza360-metrovile",
+    storageBucket: "pizza360-metrovile.firebasestorage.app",
+    messagingSenderId: "105159227742",
+    appId: "1:105159227742:web:864c2089f6a84d6a8277cf"
+  };
+  // ======================================================================
+
+  // Import Firebase modules safely wrap inside try/catch if blocked by browser local file origin policies
+  let initializeApp, getFirestore, collection, doc, getDocs, getDoc, deleteDoc, writeBatch, query, limit, startAfter;
+  let db;
+  let firebaseInitialized = false;
+
+  const deleteCloudBtn = document.getElementById("deleteCloudBtn");
+  const progressArea = document.getElementById("progressArea");
+
+  try {
+    const modules = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    ]);
     
-  </div>
+    initializeApp = modules[0].initializeApp;
+    getFirestore = modules[1].getFirestore;
+    collection = modules[1].collection;
+    doc = modules[1].doc;
+    getDocs = modules[1].getDocs;
+    getDoc = modules[1].getDoc;
+    deleteDoc = modules[1].deleteDoc;
+    writeBatch = modules[1].writeBatch;
+    query = modules[1].query;
+    limit = modules[1].limit;
+    startAfter = modules[1].startAfter;
 
-  <div class="toast" id="toast">
-    License key copied successfully!
-  </div>
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    firebaseInitialized = true;
+    console.log("Firebase initialized successfully");
+  } catch (error) {
+    console.error("Firebase initialization failed (Likely running directly as local file structure without a live server):", error);
+    firebaseInitialized = false;
+  }
 
-  <script>
-    /**
-     * IMPORTANT:
-     * This salt MUST exactly match the POS application's salt.
-     */
-    const SECRET_SALT = "78R4JHGFpizza360metrovileEWIUH34@12<D>";
+  // ======================= LICENSE GENERATION LOGIC =======================
+  const SECRET_SALT = "78R4JHGFpizza360metrovileEWIUH34@12<D>";
+  const restaurantIdInput = document.getElementById("restaurantId");
+  const generateBtn = document.getElementById("generateBtn");
+  const outputContainer = document.getElementById("outputContainer");
+  const outputKey = document.getElementById("outputKey");
+  const copyBtn = document.getElementById("copyBtn");
+  const toastEl = document.getElementById("toast");
 
-    const restaurantIdInput = document.getElementById("restaurantId");
-    const generateBtn = document.getElementById("generateBtn");
-    const outputContainer = document.getElementById("outputContainer");
-    const outputKey = document.getElementById("outputKey");
-    const copyBtn = document.getElementById("copyBtn");
-    const toast = document.getElementById("toast");
+  let generatedKey = "";
 
-    let generatedKey = "";
+  async function sha256(message) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(message);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  }
 
-    async function sha256(message) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(message);
+  function showToast(message, isError = false) {
+    toastEl.textContent = message;
+    if (isError) toastEl.style.background = "#dc2626";
+    else toastEl.style.background = "#10b981";
+    toastEl.classList.add("show");
+    setTimeout(() => {
+      toastEl.classList.remove("show");
+      toastEl.style.background = "#10b981";
+    }, 2800);
+  }
 
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-
-      const hex = hashArray
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      return hex;
-    }
-
-    function showToast(message) {
-      toast.textContent = message;
-      toast.classList.add("show");
-
-      setTimeout(() => {
-        toast.classList.remove("show");
-      }, 2500);
-    }
-
-    generateBtn.addEventListener("click", async () => {
-      try {
-        const rawRestaurantId = restaurantIdInput.value.trim();
-
-        if (!rawRestaurantId) {
-          showToast("Please enter Restaurant Unique ID");
-          return;
-        }
-
-        // Standardize alphanumeric POS registry name/ID representation to match software
-        const restaurantId = rawRestaurantId
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "-")
-          .replace(/-+/g, "-")
-          .replace(/^-|-$/g, "") || "lux-bistro";
-
-        // Current timestamp in milliseconds
-        const timestamp = Date.now();
-
-        // Create string to hash
-        const rawString = restaurantId + timestamp + SECRET_SALT;
-
-        // Generate SHA-256 signature
-        const signature = await sha256(rawString);
-
-        // Combine timestamp + signature using standard pipe separator
-        const combined = `${timestamp}|${signature}`;
-
-        // Base64 encode final key
-        const base64Key = btoa(combined);
-
-        generatedKey = base64Key;
-
-        outputKey.textContent = generatedKey;
-        outputContainer.style.display = "block";
-
-      } catch (error) {
-        console.error(error);
-        showToast("Error generating key");
+  generateBtn.addEventListener("click", async () => {
+    try {
+      const rawRestaurantId = restaurantIdInput.value.trim();
+      if (!rawRestaurantId) {
+        showToast("Please enter Restaurant Unique ID", true);
+        return;
       }
-    });
+      const restaurantId = rawRestaurantId.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "lux-bistro";
+      const timestamp = Date.now();
+      const rawString = restaurantId + timestamp + SECRET_SALT;
+      const signature = await sha256(rawString);
+      const combined = `${timestamp}|${signature}`;
+      const base64Key = btoa(combined);
+      generatedKey = base64Key;
+      outputKey.textContent = generatedKey;
+      outputContainer.style.display = "block";
+      showToast("License key generated successfully!");
+    } catch (error) {
+      console.error(error);
+      showToast("Error generating key", true);
+    }
+  });
 
-    copyBtn.addEventListener("click", async () => {
-      if (!generatedKey) return;
+  copyBtn.addEventListener("click", async () => {
+    if (!generatedKey) return;
+    try {
+      await navigator.clipboard.writeText(generatedKey);
+      showToast("License key copied successfully!");
+    } catch (error) {
+      showToast("Failed to copy", true);
+    }
+  });
 
-      try {
-        await navigator.clipboard.writeText(generatedKey);
-        showToast("License key copied successfully!");
-      } catch (error) {
-        console.error(error);
-        showToast("Failed to copy");
+  // ======================= FIRESTORE DELETE LOGIC =======================
+  const cloudRestaurantInput = document.getElementById("cloudRestaurantId");
+  const modalOverlay = document.getElementById("deleteModal");
+  const step1Div = document.getElementById("step1Container");
+  const step2Div = document.getElementById("step2Container");
+  const modalWarningMsg = document.getElementById("modalWarningMsg");
+  const modalCancelStep1 = document.getElementById("modalCancelStep1");
+  const modalProceedStep1 = document.getElementById("modalProceedStep1");
+  const modalCancelStep2 = document.getElementById("modalCancelStep2");
+  const confirmDeleteInput = document.getElementById("confirmDeleteInput");
+  const modalConfirmDeleteBtn = document.getElementById("modalConfirmDeleteBtn");
+  
+  let currentDeleteTarget = null;
+  let isDeleting = false;
+
+  // Setup initial UI states depending on execution environment 
+  if (!firebaseInitialized || !db) {
+    deleteCloudBtn.disabled = true;
+    progressArea.innerHTML = "⚠️ Firebase features restricted. Run file on a local server (e.g. Live Server extension) to enable Firestore functions.";
+    progressArea.style.borderLeftColor = "#dc2626";
+  } else {
+    deleteCloudBtn.disabled = false;
+    progressArea.innerHTML = "✅ Ready — Firestore connected. Enter Restaurant ID or leave empty to delete all.";
+    progressArea.style.borderLeftColor = "#10b981";
+  }
+
+  async function deleteCollectionBatch(collectionRef, onProgressTick) {
+    let totalDeleted = 0;
+    let lastDoc = null;
+    let hasMore = true;
+    
+    while (hasMore) {
+      let q = query(collectionRef, limit(500));
+      if (lastDoc) q = query(collectionRef, limit(500), startAfter(lastDoc));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) break;
+      
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      totalDeleted += snapshot.size;
+      if (onProgressTick) onProgressTick(snapshot.size, totalDeleted);
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      if (snapshot.size < 500) hasMore = false;
+    }
+    return totalDeleted;
+  }
+
+  async function deleteSingleRestaurantData(restaurantId, progressCallback) {
+    const subCollections = [
+      "orders", "orderItems", "orderItemModifiers", "kotSnapshots",
+      "menuItems", "categories", "modifierGroups", "modifierOptions",
+      "ingredients", "recipes", "recipeItems", "stockLog", "settings"
+    ];
+    let totalDeleted = 0;
+    
+    for (const subCol of subCollections) {
+      const colRef = collection(db, "restaurants", restaurantId, subCol);
+      progressCallback(`🗑️ Deleting /${subCol}...`);
+      const deletedCount = await deleteCollectionBatch(colRef, (batchSize, currentTotal) => {
+        progressCallback(`Deleting ${subCol}: ${currentTotal} docs removed...`);
+      });
+      totalDeleted += deletedCount;
+      if (deletedCount > 0) progressCallback(`✅ Removed ${deletedCount} docs from ${subCol}`);
+    }
+    
+    const restaurantDocRef = doc(db, "restaurants", restaurantId);
+    const docSnap = await getDoc(restaurantDocRef);
+    if (docSnap.exists()) {
+      await deleteDoc(restaurantDocRef);
+      totalDeleted += 1;
+      progressCallback(`🗑️ Deleted restaurant document (${restaurantId})`);
+    }
+    return totalDeleted;
+  }
+
+  async function deleteAllRestaurantsData(progressCallback) {
+    const restaurantsRef = collection(db, "restaurants");
+    let allRestaurantIds = [];
+    let lastDoc = null;
+    let hasMore = true;
+    
+    while (hasMore) {
+      let q = query(restaurantsRef, limit(500));
+      if (lastDoc) q = query(restaurantsRef, limit(500), startAfter(lastDoc));
+      const snap = await getDocs(q);
+      if (snap.empty) break;
+      snap.forEach(docSnap => allRestaurantIds.push(docSnap.id));
+      lastDoc = snap.docs[snap.docs.length - 1];
+      if (snap.size < 500) hasMore = false;
+    }
+    
+    if (allRestaurantIds.length === 0) {
+      progressCallback("ℹ️ No restaurant documents found.");
+      return 0;
+    }
+    
+    let grandTotal = 0;
+    for (let idx = 0; idx < allRestaurantIds.length; idx++) {
+      const rid = allRestaurantIds[idx];
+      progressCallback(`[${idx+1}/${allRestaurantIds.length}] Processing restaurant: ${rid}`);
+      const deletedInRest = await deleteSingleRestaurantData(rid, (msg) => progressCallback(`   ${msg}`));
+      grandTotal += deletedInRest;
+      progressCallback(`✔️ Finished ${rid}: ${deletedInRest} objects deleted.`);
+    }
+    return grandTotal;
+  }
+  
+  function closeModal() {
+    modalOverlay.classList.remove("active");
+    step1Div.classList.remove("step-hidden");
+    step2Div.classList.add("step-hidden");
+    confirmDeleteInput.value = "";
+    modalConfirmDeleteBtn.disabled = true;
+  }
+  
+  function resetModalState() {
+    step1Div.classList.remove("step-hidden");
+    step2Div.classList.add("step-hidden");
+    confirmDeleteInput.value = "";
+    modalConfirmDeleteBtn.disabled = true;
+  }
+  
+  function showDeleteConfirmation() {
+    if (isDeleting) {
+      showToast("Deletion already in progress. Please wait.", true);
+      return;
+    }
+    
+    if (!firebaseInitialized || !db) {
+      showToast("Firebase not configured. Cannot delete data.", true);
+      return;
+    }
+    
+    const restaurantValue = cloudRestaurantInput.value.trim();
+    let warningText = "";
+    let mode = null;
+    
+    if (restaurantValue === "") {
+      mode = "all";
+      warningText = "⚠️ DELETE ALL RESTAURANTS CLOUD DATA?\n\nThis action will remove EVERY restaurant's data: orders, menu items, categories, stock logs, and all subcollections across ALL restaurants.\n\nProtected collections (appControl, licenseKeys, used_license_keys, subscriptionSettings) will remain untouched.\n\nThis cannot be undone.";
+    } else {
+      mode = "single";
+      warningText = `⚠️ Delete all Firestore data for restaurant ID: "${restaurantValue}"?\n\nThis will permanently erase orders, menu, categories, ingredients, stock logs, settings and all related subcollections for this specific restaurant.\n\nThe action is IRREVERSIBLE.`;
+    }
+    
+    modalWarningMsg.innerText = warningText;
+    currentDeleteTarget = { mode, restaurantId: mode === "single" ? restaurantValue : null };
+    resetModalState();
+    modalOverlay.classList.add("active");
+  }
+  
+  deleteCloudBtn.addEventListener("click", showDeleteConfirmation);
+  modalCancelStep1.addEventListener("click", closeModal);
+  modalCancelStep2.addEventListener("click", closeModal);
+
+  modalProceedStep1.addEventListener("click", () => {
+    step1Div.classList.add("step-hidden");
+    step2Div.classList.remove("step-hidden");
+    confirmDeleteInput.value = "";
+    modalConfirmDeleteBtn.disabled = true;
+  });
+
+  confirmDeleteInput.addEventListener("input", () => {
+    modalConfirmDeleteBtn.disabled = (confirmDeleteInput.value.trim() !== "DELETE");
+  });
+
+  modalConfirmDeleteBtn.addEventListener("click", async () => {
+    if (!currentDeleteTarget || isDeleting) return;
+    
+    isDeleting = true;
+    modalConfirmDeleteBtn.disabled = true;
+    closeModal();
+    
+    deleteCloudBtn.disabled = true;
+    progressArea.style.borderLeftColor = "#eab308";
+    
+    try {
+      let count = 0;
+      if (currentDeleteTarget.mode === "single") {
+        const targetId = currentDeleteTarget.restaurantId;
+        progressArea.innerHTML = `⏳ Starting removal for restaurant: ${targetId}...`;
+        count = await deleteSingleRestaurantData(targetId, (msg) => {
+          progressArea.innerHTML = msg;
+        });
+        progressArea.innerHTML = `✅ Successfully wiped restaurant "${targetId}". ${count} total objects dropped.`;
+      } else {
+        progressArea.innerHTML = "⏳ Scanning database for all restaurants...";
+        count = await deleteAllRestaurantsData((msg) => {
+          progressArea.innerHTML = msg;
+        });
+        progressArea.innerHTML = `✅ Finished global wipe. ${count} total objects dropped.`;
       }
-    });
-  </script>
-
+      progressArea.style.borderLeftColor = "#10b981";
+      showToast("Cloud clean up complete.");
+    } catch (err) {
+      console.error(err);
+      progressArea.innerHTML = `❌ Failure: ${err.message}`;
+      progressArea.style.borderLeftColor = "#dc2626";
+      showToast("An error occurred during runtime.", true);
+    } finally {
+      isDeleting = false;
+      deleteCloudBtn.disabled = false;
+      currentDeleteTarget = null;
+    }
+  });
+</script>
 </body>
 </html>
-<!-- const SECRET_SALT ="78R4JHGFpizza360metrovileEWIUH34@12<D>"; -->
