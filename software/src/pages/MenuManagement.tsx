@@ -398,7 +398,15 @@ export default function MenuManagement() {
                             <button onClick={() => handleOpenItemModal(item)} className="p-2.5 bg-bg-surface border border-border-light rounded-md text-text-muted hover:text-text-primary transition-all shadow-sm active:scale-95">
                               <Edit2 className="w-4 h-4" />
                             </button>
-                            <button onClick={() => handleDeleteItem(item.id)} className="p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95">
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleDeleteItem(item.id);
+                              }} 
+                              className="relative z-10 p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
+                            >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -450,7 +458,15 @@ export default function MenuManagement() {
                         <button onClick={() => handleOpenCategoryModal(cat)} className="p-2.5 bg-bg-surface border border-border-light rounded-md text-text-muted hover:text-text-primary transition-all shadow-sm active:scale-95">
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        <button onClick={() => handleDeleteCategory(cat.id)} className="p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95">
+                        <button 
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            handleDeleteCategory(cat.id);
+                          }} 
+                          className="relative z-10 p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -600,7 +616,15 @@ export default function MenuManagement() {
                                  <button onClick={() => handleOpenModifierModal(group)} className="p-2.5 bg-bg-surface border border-border-light text-text-muted hover:text-text-primary rounded-md transition-all shadow-sm active:scale-95">
                                     <Edit2 className="w-4 h-4" />
                                  </button>
-                                 <button onClick={() => handleDeleteModGroup(group)} className="p-2.5 bg-danger-light border border-danger-border text-danger hover:bg-danger transition-all rounded-md shadow-sm active:scale-95">
+                                 <button 
+                                   type="button"
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     e.preventDefault();
+                                     handleDeleteModGroup(group);
+                                   }} 
+                                   className="relative z-10 p-2.5 bg-danger-light border border-danger-border text-danger hover:bg-danger transition-all rounded-md shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
+                                 >
                                     <Trash2 className="w-4 h-4" />
                                  </button>
                               </div>

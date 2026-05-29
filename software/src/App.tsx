@@ -3,13 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useEffect, useState, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useLocation } from 'react-router-dom'; // Removed HashRouter
 import { 
   LayoutDashboard, 
   Utensils, 
@@ -30,6 +25,7 @@ import { twMerge } from 'tailwind-merge';
 import { Toaster } from 'sonner';
 import { useStore } from './store/useStore';
 import { format } from 'date-fns';
+import { ShutdownScreen, MaintenanceScreen } from './components/KillSwitchScreens';
 
 // Pages
 import POS from './pages/POS';
@@ -69,6 +65,7 @@ const Sidebar = ({
   const user = useStore(state => state.user);
   const logout = useStore(state => state.logout);
   const isOnline = useStore(state => state.isOnline);
+  const cloudSync = useStore(state => state.cloudSync);
   const settings = useStore(state => state.settings);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -207,12 +204,12 @@ const Sidebar = ({
         {/* Status Indicators */}
         <div className={cn("flex flex-col gap-2", !isExpanded && "items-center")}>
           <div className="group relative flex items-center gap-3">
-             <div className={cn("w-2 h-2 rounded-full shrink-0", isOnline ? "bg-success" : "bg-danger")} />
-             {isExpanded && <span className="text-[9px] font-black text-text-sidebar uppercase tracking-widest">{isOnline ? 'Online' : 'Offline'}</span>}
+             <div className={cn("w-2 h-2 rounded-full shrink-0", !cloudSync ? "bg-gray-400" : (isOnline ? "bg-success" : "bg-danger"))} />
+             {isExpanded && <span className={cn("text-[9px] font-black uppercase tracking-widest", !cloudSync ? "text-gray-400" : "text-text-sidebar")}>{!cloudSync ? 'Sync Disabled' : (isOnline ? 'Online' : 'Offline')}</span>}
              
              {!isExpanded && (
                 <div className="absolute left-full ml-4 px-3 py-1.5 bg-bg-sidebar-hover text-white text-[10px] font-black uppercase tracking-widest rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 translate-x-[-10px] group-hover:translate-x-0 z-[100] whitespace-nowrap">
-                  {isOnline ? 'Network Online' : 'Network Offline'}
+                  {!cloudSync ? 'Sync Disabled' : (isOnline ? 'Network Online' : 'Network Offline')}
                   <div className="absolute left-[-4px] top-1/2 -translate-y-1/2 w-2 h-2 bg-bg-sidebar-hover rotate-45" />
                 </div>
              )}
@@ -269,6 +266,7 @@ const TopBar = ({
 }) => {
   const ingredients = useStore(state => state.ingredients);
   const isOnline = useStore(state => state.isOnline);
+  const cloudSync = useStore(state => state.cloudSync);
   const forceSync = useStore(state => state.forceSync);
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -323,9 +321,9 @@ const TopBar = ({
           </button>
           
           <div className="hidden lg:flex items-center gap-2">
-            <div className={cn("w-1.5 h-1.5 rounded-full", isOnline ? "bg-success" : "bg-danger")} />
-            <span className={cn("text-[10px] font-bold uppercase tracking-tight", isOnline ? "text-success" : "text-danger")}>
-              {isOnline ? 'Online' : 'Offline'}
+            <div className={cn("w-1.5 h-1.5 rounded-full", !cloudSync ? "bg-gray-400" : (isOnline ? "bg-success" : "bg-danger"))} />
+            <span className={cn("text-[10px] font-bold uppercase tracking-tight", !cloudSync ? "text-gray-400" : (isOnline ? "text-success" : "text-danger"))}>
+              {!cloudSync ? 'Sync Disabled' : (isOnline ? 'Online' : 'Offline')}
             </span>
           </div>
         </div>
@@ -357,6 +355,10 @@ export default function App() {
   const settings = useStore(state => state.settings);
   const sidebarState = useStore(state => state.sidebarState);
   const setSidebarStateResult = useStore(state => state.setSidebarState);
+  
+  const globalShutdown = useStore(state => state.globalShutdown);
+  const restaurantShutdown = useStore(state => state.restaurantShutdown);
+  const maintenanceMode = useStore(state => state.maintenanceMode);
   
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const [isMobileMode, setIsMobileMode] = useState(false);
@@ -405,6 +407,19 @@ export default function App() {
     window.addEventListener('resize', checkSize);
     return () => window.removeEventListener('resize', checkSize);
   }, [init]);
+
+  useEffect(() => {
+    const startKillSwitchListeners = useStore.getState().startKillSwitchListeners;
+    const stopKillSwitchListeners = useStore.getState().stopKillSwitchListeners;
+
+    if (user) {
+      startKillSwitchListeners();
+    }
+
+    return () => {
+      stopKillSwitchListeners();
+    };
+  }, [user]);
 
   // Escape key listener
   useEffect(() => {
@@ -462,16 +477,7 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="h-screen w-screen bg-bg-app overflow-hidden">
-        <Login />
-        <Toaster position="top-right" theme="light" richColors />
-        <GlobalModals />
-      </div>
-    );
-  }
-
+  // 1. License expired / not activated
   if (licenseStatus === 'locked') {
     return (
       <div className="h-screen w-screen bg-bg-app overflow-hidden">
@@ -482,56 +488,88 @@ export default function App() {
     );
   }
 
+  // 2. Global shutdown / 3. Restaurant shutdown
+  if (globalShutdown || restaurantShutdown) {
+    return (
+      <div className="h-screen w-screen bg-bg-app overflow-hidden">
+        <ShutdownScreen />
+        <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
+      </div>
+    );
+  }
+
+  // 4. Maintenance mode
+  if (maintenanceMode) {
+    return (
+      <div className="h-screen w-screen bg-bg-app overflow-hidden">
+        <MaintenanceScreen />
+        <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
+      </div>
+    );
+  }
+
+  // 5. Login screen
+  if (!user) {
+    return (
+      <div className="h-screen w-screen bg-bg-app overflow-hidden">
+        <Login />
+        <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
+      </div>
+    );
+  }
+
+  // No Router wrapper here - just the div
   return (
-    <Router>
-      <div className="flex h-screen overflow-hidden bg-bg-app relative">
-        {/* Mobile Backdrop */}
-        <AnimatePresence>
-          {isMobileMode && isOverlayOpen && (
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              onClick={() => setIsOverlayOpen(false)}
-              aria-hidden="true"
-              className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[45]"
-            />
-          )}
-        </AnimatePresence>
-
-        <Sidebar 
-          isOpen={isOverlayOpen} 
-          onClose={() => setIsOverlayOpen(false)} 
-          sidebarState={sidebarState}
-          setSidebarState={setSidebarStateResult}
-          isMobileMode={isMobileMode}
-        />
-
-        <div 
-          className="flex-1 flex flex-col min-w-0 h-full overflow-hidden transition-all duration-250 ease-in-out"
-          style={{ width: '100%' }}
-        >
-          <TopBar 
-            isSidebarOpen={isOverlayOpen} 
-            onToggleSidebar={toggleSidebar} 
-            isMobileMode={isMobileMode}
-            sidebarState={sidebarState}
+    <div className="flex h-screen overflow-hidden bg-bg-app relative">
+      {/* Mobile Backdrop */}
+      <AnimatePresence>
+        {isMobileMode && isOverlayOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            onClick={() => setIsOverlayOpen(false)}
+            aria-hidden="true"
+            className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[45]"
           />
-          <main className="flex-1 overflow-auto relative custom-scrollbar">
-            <Routes>
-              <Route path="/" element={<POS />} />
-              <Route path="/menu" element={<MenuManagement />} />
-              <Route path="/inventory" element={<Inventory />} />
-              <Route path="/records" element={<Records />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
-          </main>
-        </div>
+        )}
+      </AnimatePresence>
+
+      <Sidebar 
+        isOpen={isOverlayOpen} 
+        onClose={() => setIsOverlayOpen(false)} 
+        sidebarState={sidebarState}
+        setSidebarState={setSidebarStateResult}
+        isMobileMode={isMobileMode}
+      />
+
+      <div 
+        className="flex-1 flex flex-col min-w-0 h-full overflow-hidden transition-all duration-250 ease-in-out"
+        style={{ width: '100%' }}
+      >
+        <TopBar 
+          isSidebarOpen={isOverlayOpen} 
+          onToggleSidebar={toggleSidebar} 
+          isMobileMode={isMobileMode}
+          sidebarState={sidebarState}
+        />
+        <main className="flex-1 overflow-auto relative custom-scrollbar">
+          <Routes>
+            <Route path="/" element={<POS />} />
+            <Route path="/menu" element={<MenuManagement />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/records" element={<Records />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </main>
       </div>
       <Toaster position="top-right" theme="light" richColors />
       <GlobalModals />
-    </Router>
+    </div>
   );
 }
 
@@ -710,4 +748,3 @@ function GlobalModals() {
     </>
   );
 }
-

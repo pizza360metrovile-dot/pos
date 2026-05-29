@@ -85,8 +85,10 @@ export async function validateKey(inputKey: string): Promise<{ timestamp: string
  */
 export async function getLocalSubscription(): Promise<SubscriptionSettings> {
   const entry = await db.settings.where({ key: 'subscriptionSettings' }).first();
-  if (entry) {
-    return entry.value as SubscriptionSettings;
+  if (entry && entry.value) {
+    return {
+      expiryDate: Number((entry.value as any).expiryDate || 0)
+    };
   }
   // Default first-run setup: No free trial. Initialize as unactivated (0 expiry date)
   const newSub = { expiryDate: 0 };
@@ -145,7 +147,7 @@ export async function activateLicenseKey(inputKey: string): Promise<Subscription
   await db.table('appMeta').put({
     key: '_ki', value: keyId });
   await db.table('appMeta').put({
-    key: '_xe', value: expiresAt });
+    key: '_xe', value: Number(expiresAt) });
   await db.table('appMeta').put({
     key: '_di', value: deviceId });
   await db.table('appMeta').put({

@@ -8,7 +8,7 @@ import { db } from '../lib/db';
 import { MenuItem, Category, Order, OrderItem, RestaurantSettings, OrderType, Ingredient, Recipe, RecipeItem, StockLog, KotSnapshot, ModifierGroup, ModifierOption, OrderItemModifier } from '../types';
 import { toast } from 'sonner';
 import { fireStore } from '../lib/firebase';
-import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings, getOrCreateDeviceId, computeChecksum } from '../services/licenseService';
+import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings, getOrCreateDeviceId, computeChecksum, getRestaurantId } from '../services/licenseService';
 import { 
   doc, 
   setDoc, 
@@ -19,7 +19,9 @@ import {
   getDocs, 
   writeBatch,
   Timestamp,
-  getDoc
+  getDoc,
+  enableNetwork,
+  disableNetwork
 } from 'firebase/firestore';
 
 interface AppUser {
@@ -52,9 +54,18 @@ interface StoreState {
   deliveryChargeWaived: boolean;
   deliveryChargeWaivedReason: string;
   
+  discountType: 'percent' | 'flat' | null;
+  discountValue: number;
+  setDiscountType: (type: 'percent' | 'flat' | null) => void;
+  setDiscountValue: (value: number) => void;
+  deliveryCharge: number | null;
+  setDeliveryCharge: (charge: number | null) => void;
+  
   // Auth & Sync State
   user: AppUser | null;
   isOnline: boolean;
+  cloudSync: boolean;
+  setCloudSync: (enabled: boolean) => Promise<void>;
   lastSynced: number | null;
   lastAction: number;
   sidebarState: 'expanded' | 'collapsed';
@@ -87,7 +98,8 @@ interface StoreState {
   // Order Actions
   addOrder: (order: Order) => Promise<void>;
   updateOrder: (order: Order) => Promise<void>;
-  deleteOrder: (id: string | number) => Promise<void>;
+  deleteOrder: (id: string | number, reason?: string, byEmail?: string) => Promise<void>;
+  restoreOrder: (id: string | number) => Promise<void>;
   
   // Settings Actions
   updateSettings: (settings: RestaurantSettings) => Promise<void>;
@@ -123,11 +135,24 @@ interface StoreState {
 
   // Data Export/Import
   exportData: () => Promise<string>;
-  importData: (json: string) => Promise<void>;
+  importData: (jsonOrObj: any) => Promise<void>;
+  deleteAllAppData: (keepMenuItems: boolean) => Promise<void>;
 
   // Global Dialog states
   confirmModal: ConfirmModalState | null;
   promptModal: PromptModalState | null;
+
+  // Remote Kill Switch State & Actions
+  globalShutdown: boolean;
+  globalShutdownMessage: string;
+  restaurantShutdown: boolean;
+  restaurantShutdownMessage: string;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  killSwitchListeners: (() => void)[] | null;
+  startKillSwitchListeners: () => Promise<void>;
+  stopKillSwitchListeners: () => void;
+  fetchLatestKillSwitchState: () => Promise<void>;
 }
 
 export interface ConfirmModalState {
@@ -147,6 +172,10 @@ export interface PromptModalState {
   defaultValue: string;
   resolve: (value: string | null) => void;
 }
+
+
+let activeSyncUnsubscribers: (() => void)[] = [];
+let licenseExpiryCheckInterval: any = null;
 
 
 const DEFAULT_SETTINGS: RestaurantSettings = {
@@ -301,6 +330,116 @@ async function deductInventory(order: Order, get: () => any) {
   }
 }
 
+async function deductInventoryOnRestore(order: Order, get: () => any) {
+  const autoDisabledItems: string[] = [];
+  const items = order.items || await db.orderItems.where({ orderId: order.id }).toArray();
+
+  for (const item of items) {
+    // 1. Stock deduction for the item itself if it is a 'stocked' type
+    const menuItem = await db.menuItems.get(item.menuItemId);
+    if (menuItem) {
+      const categoryId = isNaN(Number(menuItem.categoryId)) ? menuItem.categoryId : Number(menuItem.categoryId);
+      const category = await db.categories.get(categoryId);
+      
+      if (category?.type === 'stocked') {
+        const newDirectStock = Math.max(0, menuItem.directStock - item.quantity);
+        const isOut = newDirectStock <= 0;
+        const updatedItem = { 
+          ...menuItem, 
+          directStock: newDirectStock,
+          isActive: isOut ? false : menuItem.isActive,
+          disabledReason: isOut ? 'out_of_stock' : menuItem.disabledReason
+        };
+        await db.menuItems.update(menuItem.id, updatedItem as any);
+        get().syncToFirebase('menuItems', menuItem.id, updatedItem);
+
+        // Stock Log for restored order (making a deduction)
+        const logEntry: StockLog = {
+          menuItemId: menuItem.id,
+          changeAmount: -item.quantity,
+          reason: 'order_restored',
+          remainingAfter: newDirectStock,
+          createdAt: Date.now(),
+          note: `Order #${order.id} restored`
+        };
+        const logId = await db.stockLog.add(logEntry);
+        get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+        if (newDirectStock === 0) {
+          toast.warning(`${menuItem.name} is now out of stock and has been hidden from the menu`);
+        } else if (newDirectStock <= menuItem.minStock) {
+          toast.warning(`${menuItem.name} stock is low — only ${newDirectStock} remaining`);
+        }
+      }
+    }
+
+    const recipe = await db.recipes.where({ menuItemId: item.menuItemId }).first();
+    if (recipe) {
+      const recipeItems = await db.recipeItems.where({ recipeId: recipe.id }).toArray();
+      for (const rItem of recipeItems) {
+        const ingredient = await db.ingredients.get(rItem.ingredientId!);
+        if (ingredient) {
+          const deduction = rItem.quantityUsed * item.quantity;
+          // Subtract the exact quantity defined in the recipe, allowing negative stock
+          const newStock = ingredient.currentStock - deduction;
+          const updatedIngredient = { ...ingredient, currentStock: newStock };
+          
+          await db.ingredients.update(ingredient.id!, updatedIngredient);
+          get().syncToFirebase('ingredients', ingredient.id!, updatedIngredient);
+          
+          const logEntry = {
+            ingredientId: ingredient.id!,
+            changeAmount: -deduction,
+            reason: 'order_restored',
+            remainingAfter: newStock,
+            createdAt: Date.now(),
+            note: `Order #${order.id} restored`
+          };
+          const logId = await db.stockLog.add(logEntry);
+          get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+          if (newStock < 0) {
+            // Low stock alert with negative deficit logged
+            toast.warning(`Ingredient "${ingredient.name}" current stock is insufficient. Deficit logged: ${newStock.toFixed(2)} ${ingredient.unit}`);
+          } else if (newStock <= ingredient.reorderThreshold) {
+            toast.warning(`Ingredient "${ingredient.name}" stock is low — only ${newStock.toFixed(2)} ${ingredient.unit} remaining`);
+          }
+
+          if (newStock <= 0) {
+            const affectedRecipes = await db.recipeItems.where({ ingredientId: ingredient.id! }).toArray();
+            for (const affRecipeItem of affectedRecipes) {
+              const affRecipe = await db.recipes.get(affRecipeItem.recipeId);
+              if (affRecipe) {
+                const affMenuItem = await db.menuItems.get(affRecipe.menuItemId);
+                if (affMenuItem && affMenuItem.isActive) {
+                  const affCategoryId = isNaN(Number(affMenuItem.categoryId)) ? affMenuItem.categoryId : Number(affMenuItem.categoryId);
+                  const affCategory = await db.categories.get(affCategoryId);
+                  // Only auto-disable if it's a Stocked item
+                  if (affCategory?.type === 'stocked') {
+                    const updatedAffItem = { 
+                      ...affMenuItem, 
+                      isActive: false,
+                      disabledReason: 'out_of_stock'
+                    } as MenuItem;
+                    await db.menuItems.update(affMenuItem.id, updatedAffItem as any);
+                    get().syncToFirebase('menuItems', affMenuItem.id, updatedAffItem);
+                    autoDisabledItems.push(affMenuItem.name);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (autoDisabledItems.length > 0) {
+    const uniqueDisabled = Array.from(new Set(autoDisabledItems));
+    toast.warning(`Some items were auto-disabled: ${uniqueDisabled.join(', ')} due to out of stock ingredients`);
+  }
+}
+
 export const useStore = create<StoreState>((set, get) => ({
   menuItems: [],
   categories: [],
@@ -316,12 +455,22 @@ export const useStore = create<StoreState>((set, get) => ({
   isLoading: true,
   user: null,
   isOnline: window.navigator.onLine,
+  cloudSync: true,
   lastSynced: null,
   lastAction: Date.now(),
   sidebarState: 'expanded',
   subscription: null,
   confirmModal: null,
   promptModal: null,
+
+  // Remote Kill Switch default values
+  globalShutdown: false,
+  globalShutdownMessage: '',
+  restaurantShutdown: false,
+  restaurantShutdownMessage: '',
+  maintenanceMode: false,
+  maintenanceMessage: '',
+  killSwitchListeners: null,
 
   // POS Initial State
   cart: [],
@@ -331,9 +480,25 @@ export const useStore = create<StoreState>((set, get) => ({
   activeOrder: null,
   deliveryChargeWaived: false,
   deliveryChargeWaivedReason: '',
+  discountType: 'percent',
+  discountValue: 0,
+  deliveryCharge: null,
 
   init: async () => {
     set({ isLoading: true });
+
+    // Read sync setting
+    const syncObj = await db.appMeta.get('_sync');
+    const isSyncEnabled = syncObj ? syncObj.value !== false : true;
+    set({ cloudSync: isSyncEnabled });
+    if (!isSyncEnabled && fireStore) {
+      try {
+        await disableNetwork(fireStore);
+        set({ isOnline: false });
+      } catch (err) {
+        console.warn('Failed to disable firestore network on init:', err);
+      }
+    }
 
     // 1. Seed Default User
     const defaultUser = await db.users.get('operator-1');
@@ -359,10 +524,16 @@ export const useStore = create<StoreState>((set, get) => ({
 
     // 3. Online/Offline Listeners
     window.addEventListener('online', () => {
-      set({ isOnline: true });
-      triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+      if (get().cloudSync) {
+        set({ isOnline: true });
+        triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+      }
     });
-    window.addEventListener('offline', () => set({ isOnline: false }));
+    window.addEventListener('offline', () => {
+      if (get().cloudSync) {
+        set({ isOnline: false });
+      }
+    });
 
     // 4. Activity Tracking (8h timeout)
     const updateActivity = () => {
@@ -416,19 +587,85 @@ export const useStore = create<StoreState>((set, get) => ({
     await getOrCreateDeviceId();
 
     // 4.5 Launch License Check Sequence
+    const keyRecord = await db.appMeta.get('_xe');
+    const expiresAt = Number(keyRecord?.value);
+    const now = Date.now();
+
+    if (isNaN(expiresAt)) {
+      // expiresAt corrupt or missing
+      await db.appMeta.delete('_ki');
+      await db.appMeta.delete('_xe');
+      await db.appMeta.delete('_ia');
+      await db.appMeta.delete('_cs');
+      await db.appMeta.delete('_lv');
+      await db.appMeta.delete('_warn');
+
+      const subscription = { expiryDate: 0 };
+      await db.settings.put({ key: 'subscriptionSettings', value: subscription });
+      const mergedSettings = { ...settings, licenseExpiry: 0 };
+      set({
+        categories,
+        menuItems,
+        settings: mergedSettings,
+        orders,
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        subscription,
+        isLoading: false
+      });
+      return; // Stop here.
+    }
+
+    if (expiresAt <= now) {
+      // License expired
+      const subscription = { expiryDate: expiresAt };
+      await db.settings.put({ key: 'subscriptionSettings', value: subscription });
+      const mergedSettings = { ...settings, licenseExpiry: expiresAt };
+      set({
+        categories,
+        menuItems,
+        settings: mergedSettings,
+        orders,
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        subscription,
+        isLoading: false
+      });
+      return; // Stop here.
+    }
+
+    if ((expiresAt - now) <= 10 * 24 * 60 * 60 * 1000) {
+      // 10 days or less remaining
+      await db.appMeta.put({
+        key: '_warn', value: true
+      });
+    } else {
+      await db.appMeta.delete('_warn');
+    }
+
+    // Now proceed with normal cryptographic signature and checksum check
     const ki = await db.appMeta.get('_ki');
-    const xe = await db.appMeta.get('_xe');
     const di = await db.appMeta.get('_di');
     const cs = await db.appMeta.get('_cs');
 
     let licenseValid = false;
     let finalExpiry = 0;
 
-    if (ki && xe && di && cs && ki.value !== undefined && xe.value !== undefined && di.value !== undefined && cs.value !== undefined) {
-      const recomputed = await computeChecksum(ki.value, xe.value, di.value);
+    if (ki && di && cs && ki.value !== undefined && di.value !== undefined && cs.value !== undefined) {
+      const recomputed = await computeChecksum(ki.value, expiresAt, di.value);
       if (recomputed === cs.value) {
         licenseValid = true;
-        finalExpiry = Number(xe.value);
+        finalExpiry = expiresAt;
       } else {
         // Mismatch: clear appMeta (keeping deviceId)
         await db.appMeta.delete('_ki');
@@ -436,15 +673,237 @@ export const useStore = create<StoreState>((set, get) => ({
         await db.appMeta.delete('_ia');
         await db.appMeta.delete('_cs');
         await db.appMeta.delete('_lv');
+        await db.appMeta.delete('_warn');
       }
-    } else {
-      // ANY field missing
-      licenseValid = false;
+    }
+
+    if (!licenseValid) {
+      // If signature mismatch or not valid, treat as 0
+      finalExpiry = 0;
+      const subscription = { expiryDate: 0 };
+      await db.settings.put({ key: 'subscriptionSettings', value: subscription });
+      const mergedSettings = { ...settings, licenseExpiry: 0 };
+      set({
+        categories,
+        menuItems,
+        settings: mergedSettings,
+        orders,
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        subscription,
+        isLoading: false
+      });
+      return;
+    }
+
+    // Start real-time expiry interval check while app is open
+    if (!licenseExpiryCheckInterval) {
+      licenseExpiryCheckInterval = setInterval(async () => {
+        const record = await db.appMeta.get('_xe');
+        const expiresAtVal = Number(record?.value);
+        if (expiresAtVal && expiresAtVal <= Date.now()) {
+          // License just expired while app was open
+          window.location.reload();
+          // Reload triggers launch check 
+          // which shows hard stop screen
+        }
+      }, 60 * 60 * 1000);
     }
 
     // Update local subscriptionSettings to stay in sync with our verified check
     await db.settings.put({ key: 'subscriptionSettings', value: { expiryDate: finalExpiry } });
     const subscription = { expiryDate: finalExpiry };
+
+    // 4.6 Launch Remote Kill Switch sequence (STEP 1, 2, 3)
+    const cachedSd = await db.appMeta.get('_sd');
+    const cachedRsd = await db.appMeta.get('_rsd');
+    const cachedMm = await db.appMeta.get('_mm');
+    const cachedSdMsg = await db.appMeta.get('_sd_msg');
+    const cachedRsdMsg = await db.appMeta.get('_rsd_msg');
+    const cachedMmMsg = await db.appMeta.get('_mm_msg');
+
+    const localShutdown = cachedSd?.value === true;
+    const localRShutdown = cachedRsd?.value === true;
+    const localMaintenance = cachedMm?.value === true;
+
+    set({
+      globalShutdown: localShutdown,
+      globalShutdownMessage: cachedSdMsg?.value || '',
+      restaurantShutdown: localRShutdown,
+      restaurantShutdownMessage: cachedRsdMsg?.value || '',
+      maintenanceMode: localMaintenance,
+      maintenanceMessage: cachedMmMsg?.value || '',
+    });
+
+    // STEP 1 — Read local cached state from Dexie:
+    if (localShutdown || localRShutdown) {
+      // Show shutdown screen immediately. Do not check internet. Do not proceed to login/app.
+      const mergedSettings = { ...settings, licenseExpiry: subscription?.expiryDate };
+      set({ 
+        categories, 
+        menuItems, 
+        settings: mergedSettings, 
+        orders, 
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        subscription,
+        isLoading: false 
+      });
+      return;
+    }
+
+    if (localMaintenance) {
+      // Show maintenance screen immediately. Show retry button that attempts Firebase fetch only.
+      const mergedSettings = { ...settings, licenseExpiry: subscription?.expiryDate };
+      set({ 
+        categories, 
+        menuItems, 
+        settings: mergedSettings, 
+        orders, 
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        subscription,
+        isLoading: false 
+      });
+      return;
+    }
+
+    // STEP 2 — If online and cloudSync is enabled, fetch Firebase to get latest state:
+    if (navigator.onLine && fireStore && isSyncEnabled) {
+      try {
+        const rid = await getRestaurantId();
+        const globalDocRef = doc(fireStore, 'appControl', 'global');
+        const restDocRef = doc(fireStore, 'appControl', rid);
+
+        const [globalSnap, restSnap] = await Promise.all([
+          getDoc(globalDocRef),
+          getDoc(restDocRef)
+        ]);
+
+        const globalData = globalSnap.exists() ? globalSnap.data() : null;
+        const restData = restSnap.exists() ? restSnap.data() : null;
+
+        const remoteShutdown = globalData?.shutdown === true;
+        const remoteRShutdown = restData?.shutdown === true;
+        const remoteMaintenance = globalData?.maintenanceMode === true;
+
+        const remoteShutdownMsg = globalData?.shutdownMessage || '';
+        const remoteRShutdownMsg = restData?.shutdownMessage || '';
+        const remoteMaintenanceMsg = globalData?.maintenanceMessage || '';
+
+        // If either shutdown is true: save to Dexie, show shutdown screen, stop here.
+        if (remoteShutdown || remoteRShutdown) {
+          if (remoteShutdown) {
+            await db.appMeta.put({ key: '_sd', value: true });
+            if (remoteShutdownMsg) await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
+          }
+          if (remoteRShutdown) {
+            await db.appMeta.put({ key: '_rsd', value: true });
+            if (remoteRShutdownMsg) await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
+          }
+
+          set({
+            globalShutdown: remoteShutdown,
+            globalShutdownMessage: remoteShutdownMsg,
+            restaurantShutdown: remoteRShutdown,
+            restaurantShutdownMessage: remoteRShutdownMsg,
+          });
+
+          const mergedSettings = { ...settings, licenseExpiry: subscription?.expiryDate };
+          set({
+            categories,
+            menuItems,
+            settings: mergedSettings,
+            orders,
+            ingredients,
+            recipes,
+            recipeItems,
+            stockLogs,
+            kotSnapshots,
+            modifierGroups,
+            modifierOptions,
+            subscription,
+            isLoading: false
+          });
+          return;
+        } else {
+          // If global.shutdown === false AND restaurant.shutdown === false:
+          // Delete '_sd' and '_rsd' from Dexie (clears cached shutdown — app unlocked)
+          await db.appMeta.delete('_sd');
+          await db.appMeta.delete('_sd_msg');
+          await db.appMeta.delete('_rsd');
+          await db.appMeta.delete('_rsd_msg');
+          
+          set({
+            globalShutdown: false,
+            restaurantShutdown: false,
+            globalShutdownMessage: '',
+            restaurantShutdownMessage: ''
+          });
+        }
+
+        if (remoteMaintenance) {
+          // Save '_mm': true to Dexie, show maintenance screen, stop here.
+          await db.appMeta.put({ key: '_mm', value: true });
+          if (remoteMaintenanceMsg) await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
+
+          set({
+            maintenanceMode: true,
+            maintenanceMessage: remoteMaintenanceMsg,
+          });
+
+          const mergedSettings = { ...settings, licenseExpiry: subscription?.expiryDate };
+          set({
+            categories,
+            menuItems,
+            settings: mergedSettings,
+            orders,
+            ingredients,
+            recipes,
+            recipeItems,
+            stockLogs,
+            kotSnapshots,
+            modifierGroups,
+            modifierOptions,
+            subscription,
+            isLoading: false
+          });
+          return;
+        } else {
+          // Delete '_mm' from Dexie
+          await db.appMeta.delete('_mm');
+          await db.appMeta.delete('_mm_msg');
+          set({
+            maintenanceMode: false,
+            maintenanceMessage: ''
+          });
+        }
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
+          console.warn('Launcher remote kill switch validation skipped: client is offline.');
+          set({ isOnline: false });
+        } else {
+          console.error('Error during launcher remote kill switch validation:', err);
+        }
+      }
+    }
+
     // Fire-and-forget background synchronization
     triggerBackgroundSync().catch(err => console.warn('Startup sync failed:', err));
 
@@ -551,7 +1010,7 @@ export const useStore = create<StoreState>((set, get) => ({
     ];
 
     collections.forEach(col => {
-      onSnapshot(collection(fireStore, 'restaurants', uid, col.name), (snap) => {
+      const unsub = onSnapshot(collection(fireStore, 'restaurants', uid, col.name), (snap) => {
         snap.docChanges().forEach(async (change) => {
           const data = change.doc.data();
           if (change.type === 'added' || change.type === 'modified') {
@@ -574,10 +1033,11 @@ export const useStore = create<StoreState>((set, get) => ({
         console.warn(`Snapshot error for ${col.name}:`, err);
         if (err.message.includes('offline')) set({ isOnline: false });
       });
+      activeSyncUnsubscribers.push(unsub);
     });
 
     // Settings sync
-    onSnapshot(doc(fireStore, 'restaurants', uid), (snap) => {
+    const unsubSettings = onSnapshot(doc(fireStore, 'restaurants', uid), (snap) => {
       if (snap.exists()) {
         const settings = snap.data() as RestaurantSettings;
         db.settings.put({ key: 'main', value: settings });
@@ -587,11 +1047,12 @@ export const useStore = create<StoreState>((set, get) => ({
         }));
       }
     });
+    activeSyncUnsubscribers.push(unsubSettings);
   },
 
   syncToFirebase: async (collectionName: string, id: string | number, data: any) => {
-    const { user } = get();
-    if (!user || !fireStore) return;
+    const { user, cloudSync } = get();
+    if (!user || !fireStore || !cloudSync) return;
     try {
       if (data === null) {
         await deleteDoc(doc(fireStore, 'restaurants', user.uid, collectionName, id.toString()));
@@ -601,6 +1062,124 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ lastSynced: Date.now() });
     } catch (err) {
       console.warn(`Sync failed for ${collectionName}:`, err);
+    }
+  },
+
+  setCloudSync: async (enabled: boolean) => {
+    if (!fireStore) {
+      toast.error('Firebase is not configured.');
+      return;
+    }
+    try {
+      if (enabled) {
+        await enableNetwork(fireStore);
+        await db.appMeta.put({ key: '_sync', value: true });
+        set({ cloudSync: true, isOnline: window.navigator.onLine });
+        
+        const { user } = get();
+        if (user) {
+          set({ isLoading: true });
+          toast.info('Synchronizing data from cloud...');
+          
+          const uid = user.uid;
+          const basePath = `restaurants/${uid}`;
+          
+          try {
+            // Document Pull: settings
+            const settingsSnap = await getDoc(doc(fireStore, basePath));
+            if (settingsSnap.exists()) {
+              await db.settings.put({ key: 'main', value: settingsSnap.data() });
+            }
+
+            // Collection Pull: fetch each and put to Dexie
+            const collectionsToPull = [
+              { name: 'categories', table: db.categories },
+              { name: 'menuItems', table: db.menuItems },
+              { name: 'orders', table: db.orders },
+              { name: 'orderItems', table: db.orderItems },
+              { name: 'ingredients', table: db.ingredients },
+              { name: 'recipes', table: db.recipes },
+              { name: 'recipeItems', table: db.recipeItems },
+              { name: 'stockLog', table: db.stockLog },
+              { name: 'modifierGroups', table: db.modifierGroups },
+              { name: 'modifierOptions', table: db.modifierOptions },
+              { name: 'orderItemModifiers', table: db.orderItemModifiers }
+            ];
+
+            for (const col of collectionsToPull) {
+              const querySnap = await getDocs(collection(fireStore, basePath, col.name));
+              for (const docObj of querySnap.docs) {
+                const data = docObj.data();
+                await col.table.put(data as any);
+              }
+            }
+
+            // Rehydrate Zustand store from the newly populated IndexDB tables:
+            const categories = await db.categories.toArray();
+            const menuItems = await db.menuItems.toArray();
+            const settingsEntry = await db.settings.where({ key: 'main' }).first();
+            const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+            const orders = await db.orders.orderBy('createdAt').reverse().toArray();
+            const ingredients = await db.ingredients.toArray();
+            const recipes = await db.recipes.toArray();
+            const recipeItems = await db.recipeItems.toArray();
+            const stockLogs = await db.stockLog.orderBy('createdAt').reverse().toArray();
+            const kotSnapshots = await db.kotSnapshots.toArray();
+            const modifierGroups = await db.modifierGroups.toArray();
+            const modifierOptions = await db.modifierOptions.toArray();
+
+            const mergedSettings = { ...settings, licenseExpiry: get().subscription?.expiryDate };
+
+            set({
+              categories,
+              menuItems,
+              settings: mergedSettings,
+              orders,
+              ingredients,
+              recipes,
+              recipeItems,
+              stockLogs,
+              kotSnapshots,
+              modifierGroups,
+              modifierOptions,
+              isLoading: false
+            });
+
+            toast.success('Cloud sync enabled. Data restored from cloud.');
+
+          } catch (fetchErr: any) {
+            console.error('Failed to pull Firestore data during sync activation:', fetchErr);
+            toast.error('Sync enabled, but failed to retrieve latest database: ' + fetchErr.message);
+            set({ isLoading: false });
+          }
+
+          // Restart Firestore snapshot listeners - clean old ones first
+          activeSyncUnsubscribers.forEach(unsub => {
+            try { unsub(); } catch (e) {}
+          });
+          activeSyncUnsubscribers = [];
+
+          get().setupSync(user.uid);
+          get().startKillSwitchListeners();
+        } else {
+          toast.success('Cloud sync enabled');
+        }
+      } else {
+        await disableNetwork(fireStore);
+        await db.appMeta.put({ key: '_sync', value: false });
+        
+        // Stop all onSnapshot listeners
+        activeSyncUnsubscribers.forEach(unsub => {
+          try { unsub(); } catch (e) {}
+        });
+        activeSyncUnsubscribers = [];
+        
+        set({ cloudSync: false, isOnline: false });
+        toast.success('Cloud sync disabled. App running in local mode.');
+      }
+    } catch (err) {
+      console.error('Failed to change sync state:', err);
+      toast.error('Failed to update cloud sync state');
     }
   },
 
@@ -693,9 +1272,43 @@ export const useStore = create<StoreState>((set, get) => ({
     toast.success('Menu item updated');
   },
   deleteMenuItem: async (id) => {
+    // Try both string and number types
     await db.menuItems.delete(id);
+    const numId = Number(id);
+    if (!isNaN(numId)) {
+      await db.menuItems.delete(numId);
+    }
+
+    // Also delete any modifier groups associated with this menu item
+    const modGroups = await db.modifierGroups.toArray();
+    for (const group of modGroups) {
+      if (String(group.menuItemId) === String(id)) {
+        await db.modifierGroups.delete(group.id!);
+        get().syncToFirebase('modifierGroups', group.id!, null);
+        const options = await db.modifierOptions.toArray();
+        for (const opt of options) {
+          if (String(opt.groupId) === String(group.id)) {
+            await db.modifierOptions.delete(opt.id!);
+            get().syncToFirebase('modifierOptions', opt.id!, null);
+          }
+        }
+      }
+    }
+
     get().syncToFirebase('menuItems', id, null);
-    set(state => ({ menuItems: state.menuItems.filter(i => i.id !== id) }));
+
+    // Refresh state using db.toArray() to guarantee absolute sync
+    const [groups, opts, items] = await Promise.all([
+      db.modifierGroups.toArray(),
+      db.modifierOptions.toArray(),
+      db.menuItems.toArray()
+    ]);
+
+    set({ 
+      menuItems: items,
+      modifierGroups: groups,
+      modifierOptions: opts
+    });
     toast.success('Menu item deleted');
   },
 
@@ -715,14 +1328,19 @@ export const useStore = create<StoreState>((set, get) => ({
     toast.success('Category updated');
   },
   deleteCategory: async (id) => {
-    const items = await db.menuItems.where({ categoryId: id }).count();
-    if (items > 0) {
+    const items = await db.menuItems.toArray();
+    const hasItems = items.some(item => String(item.categoryId) === String(id));
+    if (hasItems) {
       toast.error('Cannot delete category with assigned items');
       return;
     }
     await db.categories.delete(id);
+    const numId = Number(id);
+    if (!isNaN(numId)) {
+      await db.categories.delete(numId);
+    }
     get().syncToFirebase('categories', id, null);
-    set(state => ({ categories: state.categories.filter(c => c.id !== id) }));
+    set(state => ({ categories: state.categories.filter(c => String(c.id) !== String(id)) }));
     toast.success('Category deleted');
   },
 
@@ -787,16 +1405,179 @@ export const useStore = create<StoreState>((set, get) => ({
       toast.success('Order updated');
     }
   },
-  deleteOrder: async (id) => {
-    await db.orders.delete(id);
-    get().syncToFirebase('orders', id, null);
-    const itms = await db.orderItems.where({ orderId: id }).toArray();
-    for (const itm of itms) {
-      await db.orderItems.delete(itm.id!);
-      get().syncToFirebase('orderItems', itm.id!, null);
+  deleteOrder: async (id, reason, byEmail) => {
+    const order = await db.orders.get(id);
+    if (order) {
+      const updatedOrder = {
+        ...order,
+        isDeleted: true,
+        deletedAt: Date.now(),
+        deletedReason: reason || 'N/A',
+        deletedBy: byEmail || 'N/A'
+      };
+
+      const restoredIngredients = new Set<string>();
+      let hasReversed = false;
+
+      await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories], async () => {
+        await db.orders.put(updatedOrder);
+        get().syncToFirebase('orders', id, updatedOrder);
+
+        // Only reverse inventory for orders that actually caused deductions (completed, in-progress)
+        if (order.status === 'completed' || order.status === 'in-progress') {
+          hasReversed = true;
+          const orderItems = await db.orderItems.where({ orderId: id }).toArray();
+          for (const orderItem of orderItems) {
+            const menuItem = await db.menuItems.get(orderItem.menuItemId);
+            if (menuItem) {
+              const categoryId = isNaN(Number(menuItem.categoryId)) ? menuItem.categoryId : Number(menuItem.categoryId);
+              const category = await db.categories.get(categoryId);
+              
+              if (category) {
+                if (category.type === 'prepared') {
+                  const recipe = await db.recipes.where({ menuItemId: menuItem.id }).first();
+                  if (recipe) {
+                    const rItems = await db.recipeItems.where({ recipeId: recipe.id }).toArray();
+                    for (const rItem of rItems) {
+                      const restoreQty = rItem.quantityUsed * orderItem.quantity;
+                      const ingredient = await db.ingredients.get(rItem.ingredientId!);
+                      if (ingredient) {
+                        const oldStock = ingredient.currentStock;
+                        const newStock = oldStock + restoreQty;
+                        const updatedIngredient = { ...ingredient, currentStock: newStock };
+                        await db.ingredients.update(ingredient.id!, updatedIngredient);
+                        get().syncToFirebase('ingredients', ingredient.id!, updatedIngredient);
+
+                        const logEntry: StockLog = {
+                          ingredientId: ingredient.id!,
+                          changeAmount: restoreQty,
+                          reason: 'order_deleted',
+                          remainingAfter: newStock,
+                          createdAt: Date.now(),
+                          note: `Order #${id} deleted`
+                        };
+                        const logId = await db.stockLog.add(logEntry);
+                        get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+                        restoredIngredients.add(ingredient.name);
+
+                        // IF ingredient was previously disabled (currentStock was 0 before restore):
+                        if (oldStock <= 0 && newStock > 0) {
+                          // Check if any menu items using this ingredient should be re-enabled:
+                          // IF newStock > 0: Re-enable those menuItems (isActive: true) in Dexie
+                          const affectedRecipes = await db.recipeItems.where({ ingredientId: ingredient.id! }).toArray();
+                          for (const affRecipeItem of affectedRecipes) {
+                            const affRecipe = await db.recipes.get(affRecipeItem.recipeId);
+                            if (affRecipe) {
+                              const affMenuItem = await db.menuItems.get(affRecipe.menuItemId);
+                              if (affMenuItem) {
+                                const updatedAffItem = {
+                                  ...affMenuItem,
+                                  isActive: true,
+                                  disabledReason: null
+                                };
+                                await db.menuItems.put(updatedAffItem as any);
+                                get().syncToFirebase('menuItems', affMenuItem.id, updatedAffItem);
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                } else if (category.type === 'stocked') {
+                  const restoreQty = orderItem.quantity;
+                  const oldDirectStock = menuItem.directStock || 0;
+                  const newStock = oldDirectStock + restoreQty;
+                  
+                  const updatedItem = {
+                    ...menuItem,
+                    directStock: newStock,
+                    isActive: oldDirectStock <= 0 ? true : menuItem.isActive,
+                    disabledReason: oldDirectStock <= 0 ? null : menuItem.disabledReason
+                  };
+                  await db.menuItems.put(updatedItem as any);
+                  get().syncToFirebase('menuItems', menuItem.id, updatedItem);
+
+                  const logEntry: StockLog = {
+                    menuItemId: menuItem.id,
+                    changeAmount: restoreQty,
+                    reason: 'order_deleted',
+                    remainingAfter: newStock,
+                    createdAt: Date.now(),
+                    note: `Order #${id} deleted`
+                  };
+                  const logId = await db.stockLog.add(logEntry);
+                  get().syncToFirebase('stockLog', logId, { ...logEntry, id: logId });
+
+                  restoredIngredients.add(menuItem.name);
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Update Zustand state
+      const [updatedOrders, newMenuItems, newIngredients, newStockLogs] = await Promise.all([
+        db.orders.orderBy('createdAt').reverse().toArray(),
+        db.menuItems.toArray(),
+        db.ingredients.toArray(),
+        db.stockLog.orderBy('createdAt').reverse().toArray()
+      ]);
+
+      set({ 
+        orders: updatedOrders,
+        menuItems: newMenuItems,
+        ingredients: newIngredients,
+        stockLogs: newStockLogs
+      });
+
+      if (hasReversed) {
+        toast.success(`Order #${order.orderNumber} deleted. Inventory restored for ${restoredIngredients.size} ingredients.`);
+      } else {
+        toast.success(`Order #${order.orderNumber} deleted.`);
+      }
     }
-    set(state => ({ orders: state.orders.filter(o => o.id !== id) }));
-    toast.success('Order deleted');
+  },
+
+  restoreOrder: async (id) => {
+    const order = await db.orders.get(id);
+    if (order) {
+      const updatedOrder = {
+        ...order,
+        isDeleted: false,
+        deletedAt: null,
+        deletedReason: null,
+        deletedBy: null
+      };
+
+      await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories], async () => {
+        await db.orders.put(updatedOrder);
+        get().syncToFirebase('orders', id, updatedOrder);
+
+        if (order.status === 'completed' || order.status === 'in-progress') {
+          await deductInventoryOnRestore(updatedOrder, get);
+        }
+      });
+
+      // Update Zustand state
+      const [updatedOrders, newMenuItems, newIngredients, newStockLogs] = await Promise.all([
+        db.orders.orderBy('createdAt').reverse().toArray(),
+        db.menuItems.toArray(),
+        db.ingredients.toArray(),
+        db.stockLog.orderBy('createdAt').reverse().toArray()
+      ]);
+
+      set({ 
+        orders: updatedOrders,
+        menuItems: newMenuItems,
+        ingredients: newIngredients,
+        stockLogs: newStockLogs
+      });
+
+      toast.success(`Order #${order.orderNumber} restored. Inventory re-adjusted.`);
+    }
   },
 
   updateSettings: async (settings) => {
@@ -958,14 +1739,20 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   deleteModifierGroup: async (groupId) => {
+    const numGroupId = Number(groupId);
     await db.transaction('rw', [db.modifierGroups, db.modifierOptions], async () => {
       await db.modifierGroups.delete(groupId);
+      if (!isNaN(numGroupId)) {
+        await db.modifierGroups.delete(numGroupId);
+      }
       get().syncToFirebase('modifierGroups', groupId, null);
 
-      const options = await db.modifierOptions.where({ groupId }).toArray();
+      const options = await db.modifierOptions.toArray();
       for (const opt of options) {
-        await db.modifierOptions.delete(opt.id);
-        get().syncToFirebase('modifierOptions', opt.id, null);
+        if (String(opt.groupId) === String(groupId)) {
+          await db.modifierOptions.delete(opt.id!);
+          get().syncToFirebase('modifierOptions', opt.id!, null);
+        }
       }
     });
 
@@ -985,8 +1772,14 @@ export const useStore = create<StoreState>((set, get) => ({
     tableNumber: '', 
     activeOrder: null,
     deliveryChargeWaived: false,
-    deliveryChargeWaivedReason: ''
+    deliveryChargeWaivedReason: '',
+    discountType: 'percent',
+    discountValue: 0,
+    deliveryCharge: null
   }),
+  setDiscountType: (discountType) => set({ discountType }),
+  setDiscountValue: (discountValue) => set({ discountValue }),
+  setDeliveryCharge: (deliveryCharge) => set({ deliveryCharge }),
   addToCart: (item, modifiers = [], notes = '') => {
     const { cart } = get();
     // Check for item with same modifiers and notes
@@ -1069,6 +1862,9 @@ export const useStore = create<StoreState>((set, get) => ({
       activeOrder: { ...order, status: 'in-progress' },
       deliveryChargeWaived: order.deliveryChargeWaived || false,
       deliveryChargeWaivedReason: order.deliveryChargeWaivedReason || '',
+      discountType: order.discountType || 'percent',
+      discountValue: order.discountValue || 0,
+      deliveryCharge: order.deliveryCharge !== undefined ? order.deliveryCharge : null,
     });
 
     // Update status in DB - using the non-async version of updateOrder to avoid blocking UI immediately but we should probably await it if we were in an async action
@@ -1090,59 +1886,181 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   exportData: async () => {
-    const data = {
-      settings: (await db.settings.where({ key: 'main' }).first())?.value || DEFAULT_SETTINGS,
-      categories: await db.categories.toArray(),
-      menuItems: await db.menuItems.toArray(),
-      orders: await db.orders.toArray(),
-      orderItems: await db.orderItems.toArray(),
-      ingredients: await db.ingredients.toArray(),
-      recipes: await db.recipes.toArray(),
-      recipeItems: await db.recipeItems.toArray(),
-      stockLog: await db.stockLog.toArray(),
-      kotSnapshots: await db.kotSnapshots.toArray(),
-      modifierGroups: await db.modifierGroups.toArray(),
-      modifierOptions: await db.modifierOptions.toArray(),
-      orderItemModifiers: await db.orderItemModifiers.toArray(),
+    const backup = {
+      exportedAt: Date.now(),
+      version: 1,
+      data: {
+        settings:          await db.settings.toArray(),
+        categories:        await db.categories.toArray(),
+        menuItems:         await db.menuItems.toArray(),
+        modifierGroups:    await db.modifierGroups.toArray(),
+        modifierOptions:   await db.modifierOptions.toArray(),
+        orders:            await db.orders.toArray(),
+        orderItems:        await db.orderItems.toArray(),
+        orderItemModifiers:await db.orderItemModifiers.toArray(),
+        kotSnapshots:      await db.kotSnapshots.toArray(),
+        ingredients:       await db.ingredients.toArray(),
+        recipes:           await db.recipes.toArray(),
+        recipeItems:       await db.recipeItems.toArray(),
+        stockLog:          await db.stockLog.toArray(),
+        users:             await db.users.toArray(),
+        appMeta:           await db.appMeta.toArray(),
+        used_keys:         await db.used_keys.toArray(),
+        sync_queue:        await db.sync_queue.toArray(),
+      }
     };
     
-    return JSON.stringify(data, null, 2);
+    return JSON.stringify(backup, null, 2);
   },
 
-  importData: async (json) => {
+  importData: async (jsonOrObj) => {
     try {
-      const data = JSON.parse(json);
+      const backup = typeof jsonOrObj === 'string' ? JSON.parse(jsonOrObj) : jsonOrObj;
       
+      if (!backup || typeof backup !== 'object') {
+        throw new Error('Invalid backup file');
+      }
+      
+      if (!backup.data || typeof backup.data !== 'object') {
+        throw new Error('Corrupted backup file');
+      }
+
       const tables = [
-        db.settings, db.categories, db.menuItems, db.orders, 
-        db.orderItems, db.ingredients, db.recipes, db.recipeItems, 
-        db.stockLog, db.kotSnapshots, db.modifierGroups, 
-        db.modifierOptions, db.orderItemModifiers
+        db.settings, db.categories, db.menuItems, db.modifierGroups, 
+        db.modifierOptions, db.orders, db.orderItems, db.orderItemModifiers, 
+        db.kotSnapshots, db.ingredients, db.recipes, db.recipeItems, db.stockLog,
+        db.users, db.appMeta, db.used_keys, db.sync_queue
       ];
 
       await db.transaction('rw', tables, async () => {
-        await Promise.all(tables.map(t => t.clear()));
-
-        if (data.settings) {
-          await db.settings.add({ key: 'main', value: Array.isArray(data.settings) ? data.settings[0]?.value : data.settings });
+        // STEP 1 - Clear all existing Dexie data in these tables completely
+        for (const table of tables) {
+          await table.clear();
         }
-        if (data.categories) await db.categories.bulkAdd(data.categories);
-        if (data.menuItems) await db.menuItems.bulkAdd(data.menuItems);
-        if (data.orders) await db.orders.bulkAdd(data.orders);
-        if (data.orderItems) await db.orderItems.bulkAdd(data.orderItems);
-        if (data.ingredients) await db.ingredients.bulkAdd(data.ingredients);
-        if (data.recipes) await db.recipes.bulkAdd(data.recipes);
-        if (data.recipeItems) await db.recipeItems.bulkAdd(data.recipeItems);
-        if (data.stockLog) await db.stockLog.bulkAdd(data.stockLog);
-        if (data.kotSnapshots) await db.kotSnapshots.bulkAdd(data.kotSnapshots);
-        if (data.modifierGroups) await db.modifierGroups.bulkAdd(data.modifierGroups);
-        if (data.modifierOptions) await db.modifierOptions.bulkAdd(data.modifierOptions);
-        if (data.orderItemModifiers) await db.orderItemModifiers.bulkAdd(data.orderItemModifiers);
+
+        // STEP 2 - Restore from backup file, ensuring IDs are preserved with bulkPut
+        const d = backup.data;
+        
+        if (d.settings && d.settings.length) {
+          await db.settings.bulkPut(d.settings);
+        } else if (d.settings && !Array.isArray(d.settings)) {
+          // Fallback if settings was saved as a single object previously
+          await db.settings.put(d.settings.key ? d.settings : { key: 'main', value: d.settings });
+        }
+        
+        if (d.categories?.length) await db.categories.bulkPut(d.categories);
+        if (d.menuItems?.length) await db.menuItems.bulkPut(d.menuItems);
+        if (d.modifierGroups?.length) await db.modifierGroups.bulkPut(d.modifierGroups);
+        if (d.modifierOptions?.length) await db.modifierOptions.bulkPut(d.modifierOptions);
+        if (d.orders?.length) await db.orders.bulkPut(d.orders);
+        if (d.orderItems?.length) await db.orderItems.bulkPut(d.orderItems);
+        if (d.orderItemModifiers?.length) await db.orderItemModifiers.bulkPut(d.orderItemModifiers);
+        if (d.kotSnapshots?.length) await db.kotSnapshots.bulkPut(d.kotSnapshots);
+        if (d.ingredients?.length) await db.ingredients.bulkPut(d.ingredients);
+        if (d.recipes?.length) await db.recipes.bulkPut(d.recipes);
+        if (d.recipeItems?.length) await db.recipeItems.bulkPut(d.recipeItems);
+        if (d.stockLog?.length) await db.stockLog.bulkPut(d.stockLog);
+        
+        // Optional tables for backward compatibility with older snapshots
+        if (d.users?.length) await db.users.bulkPut(d.users);
+        if (d.appMeta?.length) await db.appMeta.bulkPut(d.appMeta);
+        if (d.used_keys?.length) await db.used_keys.bulkPut(d.used_keys);
+        if (d.sync_queue?.length) await db.sync_queue.bulkPut(d.sync_queue);
       });
 
+      // Step 5: Reload/Re-hydrate Zustand store from IndexDB completely
       await get().init();
     } catch (err) {
       console.error(err);
+      throw err;
+    }
+  },
+
+  deleteAllAppData: async (keepMenuItems: boolean) => {
+    try {
+      if (keepMenuItems) {
+        // Clear specified tables
+        await db.transaction('rw', [
+          db.orders, db.orderItems, db.orderItemModifiers, db.kotSnapshots,
+          db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.settings,
+          db.sync_queue
+        ], async () => {
+          await db.orders.clear();
+          await db.orderItems.clear();
+          await db.orderItemModifiers.clear();
+          await db.kotSnapshots.clear();
+          await db.ingredients.clear();
+          await db.recipes.clear();
+          await db.recipeItems.clear();
+          await db.stockLog.clear();
+          await db.sync_queue.clear();
+          
+          await db.settings.clear();
+          await db.settings.add({ key: 'main', value: DEFAULT_SETTINGS });
+        });
+
+        // Reset Zustand store state (Keep menu items, categories, modifiers, appMeta, user session)
+        set({
+          orders: [],
+          ingredients: [],
+          recipes: [],
+          recipeItems: [],
+          stockLogs: [],
+          kotSnapshots: [],
+          settings: DEFAULT_SETTINGS,
+          cart: []
+        });
+
+        toast.success('All data deleted successfully');
+        setTimeout(() => window.location.reload(), 1500);
+
+      } else {
+        // Delete EVERYTHING except appMeta
+        await db.transaction('rw', [
+          db.orders, db.orderItems, db.orderItemModifiers, db.kotSnapshots,
+          db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.settings,
+          db.sync_queue, db.menuItems, db.categories, db.modifierGroups, db.modifierOptions
+        ], async () => {
+          await db.orders.clear();
+          await db.orderItems.clear();
+          await db.orderItemModifiers.clear();
+          await db.kotSnapshots.clear();
+          await db.ingredients.clear();
+          await db.recipes.clear();
+          await db.recipeItems.clear();
+          await db.stockLog.clear();
+          await db.sync_queue.clear();
+          await db.menuItems.clear();
+          await db.categories.clear();
+          await db.modifierGroups.clear();
+          await db.modifierOptions.clear();
+
+          await db.settings.clear();
+          await db.settings.add({ key: 'main', value: DEFAULT_SETTINGS });
+        });
+
+        // Reset Zustand store state completely
+        set({
+          menuItems: [],
+          categories: [],
+          orders: [],
+          ingredients: [],
+          recipes: [],
+          recipeItems: [],
+          stockLogs: [],
+          kotSnapshots: [],
+          modifierGroups: [],
+          modifierOptions: [],
+          cart: [],
+          settings: DEFAULT_SETTINGS
+        });
+
+        toast.success('All data deleted successfully');
+        setTimeout(() => window.location.reload(), 1500);
+      }
+    } catch (err) {
+      console.error('Failed to delete all app data:', err);
+      toast.error('Failed to delete app data');
       throw err;
     }
   },
@@ -1171,6 +2089,214 @@ export const useStore = create<StoreState>((set, get) => ({
       }));
     } catch (err: any) {
       console.warn("Manual licensing sync failed:", err);
+    }
+  },
+
+  startKillSwitchListeners: async () => {
+    if (!fireStore || !get().cloudSync) return;
+
+    // Clean up any existing listeners first
+    get().stopKillSwitchListeners();
+
+    try {
+      const rid = await getRestaurantId();
+      const globalDocRef = doc(fireStore, 'appControl', 'global');
+      const restDocRef = doc(fireStore, 'appControl', rid);
+
+      const unsubGlobal = onSnapshot(globalDocRef, async (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : { shutdown: false, shutdownMessage: '', maintenanceMode: false, maintenanceMessage: '' };
+        const currentGlobalShutdown = get().globalShutdown;
+        const currentMaintenance = get().maintenanceMode;
+
+        const remoteShutdown = data?.shutdown === true;
+        const remoteShutdownMsg = data?.shutdownMessage || '';
+        const remoteMaintenance = data?.maintenanceMode === true;
+        const remoteMaintenanceMsg = data?.maintenanceMessage || '';
+
+        // Handle Global Shutdown change
+        if (remoteShutdown !== currentGlobalShutdown) {
+          if (remoteShutdown) {
+            await db.appMeta.put({ key: '_sd', value: true });
+            if (remoteShutdownMsg) {
+              await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
+            }
+            set({ globalShutdown: true, globalShutdownMessage: remoteShutdownMsg });
+          } else {
+            await db.appMeta.delete('_sd');
+            await db.appMeta.delete('_sd_msg');
+            set({ globalShutdown: false, globalShutdownMessage: '' });
+
+            // Show toast on transition from true to false
+            if (currentGlobalShutdown === true) {
+              toast.success("Service restored");
+              // Redirect to login automatically
+              get().logout();
+            }
+          }
+        } else if (remoteShutdown && remoteShutdownMsg !== get().globalShutdownMessage) {
+          // Message updated
+          if (remoteShutdownMsg) {
+            await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
+          }
+          set({ globalShutdownMessage: remoteShutdownMsg });
+        }
+
+        // Handle Maintenance Mode change
+        if (remoteMaintenance !== currentMaintenance) {
+          if (remoteMaintenance) {
+            await db.appMeta.put({ key: '_mm', value: true });
+            if (remoteMaintenanceMsg) {
+              await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
+            }
+            set({ maintenanceMode: true, maintenanceMessage: remoteMaintenanceMsg });
+          } else {
+            await db.appMeta.delete('_mm');
+            await db.appMeta.delete('_mm_msg');
+            set({ maintenanceMode: false, maintenanceMessage: '' });
+
+            // Show toast on transition from true to false
+            if (currentMaintenance === true) {
+              toast.success("Maintenance complete");
+              get().logout();
+            }
+          }
+        } else if (remoteMaintenance && remoteMaintenanceMsg !== get().maintenanceMessage) {
+          if (remoteMaintenanceMsg) {
+            await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
+          }
+          set({ maintenanceMessage: remoteMaintenanceMsg });
+        }
+      }, (err) => {
+        console.error("Global kill switch listener error:", err);
+      });
+
+      const unsubRest = onSnapshot(restDocRef, async (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : { shutdown: false, shutdownMessage: '' };
+        const currentRestShutdown = get().restaurantShutdown;
+
+        const remoteRShutdown = data?.shutdown === true;
+        const remoteRShutdownMsg = data?.shutdownMessage || '';
+
+        // Handle Restaurant Shutdown change
+        if (remoteRShutdown !== currentRestShutdown) {
+          if (remoteRShutdown) {
+            await db.appMeta.put({ key: '_rsd', value: true });
+            if (remoteRShutdownMsg) {
+              await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
+            }
+            set({ restaurantShutdown: true, restaurantShutdownMessage: remoteRShutdownMsg });
+          } else {
+            await db.appMeta.delete('_rsd');
+            await db.appMeta.delete('_rsd_msg');
+            set({ restaurantShutdown: false, restaurantShutdownMessage: '' });
+
+            if (currentRestShutdown === true) {
+              toast.success("Service restored");
+              get().logout();
+            }
+          }
+        } else if (remoteRShutdown && remoteRShutdownMsg !== get().restaurantShutdownMessage) {
+          if (remoteRShutdownMsg) {
+            await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
+          }
+          set({ restaurantShutdownMessage: remoteRShutdownMsg });
+        }
+      }, (err) => {
+        console.error("Restaurant kill switch listener error:", err);
+      });
+
+      set({ killSwitchListeners: [unsubGlobal, unsubRest] });
+    } catch (e) {
+      console.error("Failed to start kill switch listeners:", e);
+    }
+  },
+
+  stopKillSwitchListeners: () => {
+    const listeners = get().killSwitchListeners;
+    if (listeners) {
+      listeners.forEach(unsub => {
+        try {
+          unsub();
+        } catch (e) {
+          console.warn("Failed unsubscribing:", e);
+        }
+      });
+      set({ killSwitchListeners: null });
+    }
+  },
+
+  fetchLatestKillSwitchState: async () => {
+    if (!fireStore || !get().cloudSync) return;
+    try {
+      const rid = await getRestaurantId();
+      const globalDocRef = doc(fireStore, 'appControl', 'global');
+      const restDocRef = doc(fireStore, 'appControl', rid);
+
+      const [globalSnap, restSnap] = await Promise.all([
+        getDoc(globalDocRef),
+        getDoc(restDocRef)
+      ]);
+
+      const globalData = globalSnap.exists() ? globalSnap.data() : null;
+      const restData = restSnap.exists() ? restSnap.data() : null;
+
+      const remoteShutdown = globalData?.shutdown === true;
+      const remoteRShutdown = restData?.shutdown === true;
+      const remoteMaintenance = globalData?.maintenanceMode === true;
+
+      const remoteShutdownMsg = globalData?.shutdownMessage || '';
+      const remoteRShutdownMsg = restData?.shutdownMessage || '';
+      const remoteMaintenanceMsg = globalData?.maintenanceMessage || '';
+
+      // Update states and Dexie
+      if (remoteShutdown || remoteRShutdown) {
+        if (remoteShutdown) {
+          await db.appMeta.put({ key: '_sd', value: true });
+          if (remoteShutdownMsg) {
+            await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
+          }
+        }
+        if (remoteRShutdown) {
+          await db.appMeta.put({ key: '_rsd', value: true });
+          if (remoteRShutdownMsg) {
+            await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
+          }
+        }
+      } else {
+        await db.appMeta.delete('_sd');
+        await db.appMeta.delete('_sd_msg');
+        await db.appMeta.delete('_rsd');
+        await db.appMeta.delete('_rsd_msg');
+      }
+
+      if (remoteMaintenance) {
+        await db.appMeta.put({ key: '_mm', value: true });
+        if (remoteMaintenanceMsg) {
+          await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
+        }
+      } else {
+        await db.appMeta.delete('_mm');
+        await db.appMeta.delete('_mm_msg');
+      }
+
+      set({
+        globalShutdown: remoteShutdown,
+        globalShutdownMessage: remoteShutdownMsg,
+        restaurantShutdown: remoteRShutdown,
+        restaurantShutdownMessage: remoteRShutdownMsg,
+        maintenanceMode: remoteMaintenance,
+        maintenanceMessage: remoteMaintenanceMsg
+      });
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
+        console.warn('Failed to fetch latest kill switch state: client is offline.');
+        set({ isOnline: false });
+        throw new Error('Failed to connect to the server. Please check your internet connection.');
+      } else {
+        console.error('Error fetching latest kill switch state:', err);
+        throw err;
+      }
     }
   },
 }));

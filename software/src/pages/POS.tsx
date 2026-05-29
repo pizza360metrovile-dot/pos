@@ -21,10 +21,10 @@ export default function POS() {
     cart, setCart, clearCart, addToCart, updateQuantity, removeFromCart, updateCartItem,
     orderType, updateOrderType, customerName, setCustomerName, 
     tableNumber, setTableNumber, activeOrder, setActiveOrder,
-    deliveryChargeWaived, setDeliveryChargeWaived,
-    deliveryChargeWaivedReason, setDeliveryChargeWaivedReason,
     retrieveOrder: storeRetrieveOrder, cancelHeldOrder: storeCancelHeldOrder,
-    kotSnapshots, addKotSnapshot, modifierGroups
+    kotSnapshots, addKotSnapshot, modifierGroups,
+    discountType, setDiscountType, discountValue, setDiscountValue,
+    deliveryCharge, setDeliveryCharge
   } = useStore();
   
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -67,20 +67,37 @@ export default function POS() {
     }, 0);
   }, [cart]);
   
+  const parsedDiscountValue = useMemo(() => {
+    return Math.max(0, Number(discountValue) || 0);
+  }, [discountValue]);
+
+  const discountAmount = useMemo(() => {
+    if (discountType === 'percent') {
+      const val = Math.min(100, parsedDiscountValue);
+      return subtotal * (val / 100);
+    } else if (discountType === 'flat') {
+      return Math.min(subtotal, parsedDiscountValue);
+    }
+    return 0;
+  }, [subtotal, discountType, parsedDiscountValue]);
+
+  const afterDiscount = useMemo(() => {
+    return Math.max(0, subtotal - discountAmount);
+  }, [subtotal, discountAmount]);
+
   const effectiveDeliveryCharge = useMemo(() => {
     if (orderType !== OrderType.DELIVERY || !settings.deliveryChargeEnabled) return 0;
-    if (deliveryChargeWaived) return 0;
-    return settings.deliveryChargeAmount;
-  }, [orderType, settings, deliveryChargeWaived]);
+    return deliveryCharge !== null ? deliveryCharge : (settings?.deliveryChargeAmount ?? 0);
+  }, [orderType, settings, deliveryCharge]);
 
   const taxAmount = useMemo(() => {
     const taxableAmount = settings.deliveryChargeTaxable 
-      ? subtotal + effectiveDeliveryCharge 
-      : subtotal;
+      ? afterDiscount + effectiveDeliveryCharge 
+      : afterDiscount;
     return (taxableAmount * settings.taxPercentage) / 100;
-  }, [subtotal, effectiveDeliveryCharge, settings]);
+  }, [afterDiscount, effectiveDeliveryCharge, settings]);
 
-  const total = subtotal + effectiveDeliveryCharge + taxAmount;
+  const total = afterDiscount + effectiveDeliveryCharge + taxAmount;
 
   const heldOrders = useMemo(() => orders.filter(o => o.status === 'held'), [orders]);
 
@@ -218,9 +235,12 @@ export default function POS() {
           taxAmount,
           total,
           deliveryCharge: effectiveDeliveryCharge,
-          deliveryChargeWaived,
-          deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+          deliveryChargeWaived: false,
+          deliveryChargeWaivedReason: undefined,
           updatedAt: Date.now(),
+          discountType: discountValue > 0 ? discountType : null,
+          discountValue: discountValue > 0 ? parsedDiscountValue : 0,
+          discountAmount,
         };
         await updateOrder(orderToSync);
       } else {
@@ -233,14 +253,17 @@ export default function POS() {
           total,
           type: orderType,
           deliveryCharge: effectiveDeliveryCharge,
-          deliveryChargeWaived,
-          deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+          deliveryChargeWaived: false,
+          deliveryChargeWaivedReason: undefined,
           customerName: customerName || undefined,
           tableNumber: orderType === OrderType.DINE_IN ? tableNumber : undefined,
           status: 'in-progress',
           createdAt: Date.now(),
           updatedAt: Date.now(),
           kotPrinted: true,
+          discountType: discountValue > 0 ? discountType : null,
+          discountValue: discountValue > 0 ? parsedDiscountValue : 0,
+          discountAmount,
         };
         await addOrder(orderToSync);
         setActiveOrder(orderToSync);
@@ -303,13 +326,16 @@ export default function POS() {
         total,
         type: orderType,
         deliveryCharge: effectiveDeliveryCharge,
-        deliveryChargeWaived,
-        deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+        deliveryChargeWaived: false,
+        deliveryChargeWaivedReason: undefined,
         customerName: customerName || undefined,
         tableNumber: orderType === OrderType.DINE_IN ? tableNumber : undefined,
         status: status,
         createdAt: activeOrder?.createdAt || Date.now(),
         updatedAt: Date.now(),
+        discountType: discountValue > 0 ? discountType : null,
+        discountValue: discountValue > 0 ? parsedDiscountValue : 0,
+        discountAmount,
       };
 
       if (activeOrder) {
@@ -676,8 +702,13 @@ export default function POS() {
                         </button>
                         <div className="w-px h-3 bg-border-light"></div>
                         <button 
-                          onClick={() => removeFromCart(item.id)}
-                          className="text-text-placeholder hover:text-danger transition-colors"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            removeFromCart(item.id);
+                          }}
+                          className="relative z-10 text-text-placeholder hover:text-danger transition-colors cursor-pointer pointer-events-auto"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -707,47 +738,7 @@ export default function POS() {
 
         {/* BOTTOM: Totals and Actions */}
         <div className="flex-none bg-bg-surface border-t border-border-light shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-          {/* Delivery Configuration Row */}
-          {orderType === OrderType.DELIVERY && settings.deliveryChargeEnabled && (
-            <div className="px-5 py-3 bg-bg-app/30 border-b border-border-light">
-               <div className="flex items-center justify-between gap-4">
-                 <button 
-                  onClick={() => setDeliveryChargeWaived(!deliveryChargeWaived)}
-                  className="flex items-center gap-2 group outline-none"
-                 >
-                  <div className={clsx(
-                    "w-4 h-4 rounded border flex items-center justify-center transition-all",
-                    deliveryChargeWaived ? "bg-accent border-accent" : "bg-white border-border-medium group-hover:border-border-strong"
-                  )}>
-                    {deliveryChargeWaived && <CheckSquare className="w-3 h-3 text-white" />}
-                  </div>
-                  <span className="text-[10px] font-bold text-text-secondary uppercase tracking-tight">Waive Service Fee</span>
-                 </button>
-                 
-                 <div className="flex items-center gap-2">
-                   <Truck className="w-3.5 h-3.5 text-text-placeholder" />
-                   <span className={clsx(
-                     "text-xs font-bold tabular-nums",
-                     deliveryChargeWaived ? "text-text-disabled line-through" : "text-text-primary"
-                   )}>
-                    {settings.currency}{(settings?.deliveryChargeAmount || 0).toFixed(2)}
-                   </span>
-                 </div>
-               </div>
 
-               {deliveryChargeWaived && (
-                 <div className="mt-2">
-                    <input
-                      type="text"
-                      placeholder="Reason for waiver..."
-                      className="w-full bg-bg-surface border border-border-light rounded px-2 py-1 text-[10px] text-text-primary placeholder:text-text-placeholder focus:outline-none focus:border-accent"
-                      value={deliveryChargeWaivedReason}
-                      onChange={(e) => setDeliveryChargeWaivedReason(e.target.value)}
-                    />
-                 </div>
-               )}
-            </div>
-          )}
 
           {/* Pricing Totals */}
           <div className="px-5 py-3 space-y-1.5">
@@ -755,10 +746,91 @@ export default function POS() {
               <span className="uppercase tracking-tight opacity-70">Subtotal</span>
               <span className="tabular-nums font-bold font-mono">{settings.currency}{(subtotal || 0).toFixed(2)}</span>
             </div>
-            {orderType === OrderType.DELIVERY && settings.deliveryChargeEnabled && !deliveryChargeWaived && (
-              <div className="flex justify-between items-center text-[10px] font-medium text-text-muted italic">
-                <span className="uppercase tracking-tight">{settings.deliveryChargeLabel}</span>
-                <span className="tabular-nums font-bold">+{settings.currency}{(settings?.deliveryChargeAmount || 0).toFixed(2)}</span>
+
+            {/* Compact Inline Discount Input Row */}
+            <div className="flex justify-between items-center h-9 text-[11px] py-1 border-b border-dashed border-border-light/40">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-text-secondary uppercase tracking-tight">Disc.</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  value={discountValue || ''}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setDiscountValue(isNaN(val) ? 0 : Math.max(0, val));
+                  }}
+                  className="w-[70px] h-6 px-1.5 text-center bg-bg-surface border border-border-light rounded text-[11px] font-bold focus:outline-none focus:border-accent text-text-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  id="pos-discount-value-input"
+                />
+                <div id="pos-discount-type-toggle" className="flex rounded-md border border-border-light overflow-hidden bg-bg-surface p-0.5 h-6">
+                  <button
+                    type="button"
+                    id="discount-type-percent-btn"
+                    onClick={() => setDiscountType('percent')}
+                    className={clsx(
+                      "px-2 text-[9px] font-semibold rounded transition-colors",
+                      discountType === 'percent' 
+                        ? "bg-accent text-white" 
+                        : "text-text-secondary hover:bg-bg-surface"
+                    )}
+                  >
+                    %
+                  </button>
+                  <button
+                    type="button"
+                    id="discount-type-flat-btn"
+                    onClick={() => setDiscountType('flat')}
+                    className={clsx(
+                      "px-1.5 text-[9px] font-semibold rounded transition-colors",
+                      discountType === 'flat' 
+                        ? "bg-accent text-white" 
+                        : "text-text-secondary hover:bg-bg-surface"
+                    )}
+                  >
+                    Rs.
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Discount Display Line (Only when discountValue > 0) */}
+            {discountValue > 0 && parsedDiscountValue > 0 && (
+              <div className="flex justify-between items-center text-[11px] font-medium text-danger">
+                <span className="uppercase tracking-tight">
+                  Discount {discountType === 'percent' ? `(${discountValue}%)` : `(Rs. ${discountValue})`}
+                </span>
+                <span className="tabular-nums font-bold font-mono">
+                  -{settings.currency}{(discountAmount || 0).toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {orderType === OrderType.DELIVERY && settings.deliveryChargeEnabled && (
+              <div className="flex justify-between items-center text-[11px] font-medium text-text-secondary h-8">
+                <span className="uppercase tracking-tight flex items-center gap-1 opacity-70">
+                  <span>🛵</span>
+                  <span>{settings.deliveryChargeLabel || 'Delivery'}</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-[10px] font-mono text-text-muted">{settings.currency}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={deliveryCharge === null ? (settings?.deliveryChargeAmount ?? '') : (deliveryCharge === 0 ? '' : deliveryCharge)}
+                    onChange={(e) => {
+                      if (e.target.value === '') {
+                        setDeliveryCharge(0);
+                      } else {
+                        const val = parseFloat(e.target.value);
+                        setDeliveryCharge(isNaN(val) ? 0 : Math.max(0, val));
+                      }
+                    }}
+                    className="w-[80px] h-6 px-1.5 text-right bg-bg-surface border border-border-light rounded text-[11px] font-bold focus:outline-none focus:border-accent text-text-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    id="pos-delivery-charge-input"
+                  />
+                </div>
               </div>
             )}
             <div className="flex justify-between items-center text-[11px] font-medium text-text-secondary">
@@ -837,8 +909,8 @@ export default function POS() {
                 customerName,
                 tableNumber,
                 deliveryCharge: effectiveDeliveryCharge,
-                deliveryChargeWaived,
-                deliveryChargeWaivedReason: deliveryChargeWaived ? deliveryChargeWaivedReason : undefined,
+                deliveryChargeWaived: false,
+                deliveryChargeWaivedReason: undefined,
                 status: 'pending',
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
@@ -945,8 +1017,13 @@ export default function POS() {
                           Restore
                         </button>
                         <button 
-                          onClick={() => cancelHeldOrder(order.id, order.orderNumber)}
-                          className="px-5 py-3 bg-white border border-slate-100 text-slate-300 hover:text-rose-500 hover:bg-rose-50 hover:border-rose-100 rounded-2xl transition-all active:scale-95"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            cancelHeldOrder(order.id, order.orderNumber);
+                          }}
+                          className="relative z-10 px-5 py-3 bg-white border border-slate-100 text-slate-300 hover:text-rose-500 hover:bg-rose-50 hover:border-rose-100 rounded-2xl transition-all active:scale-95 cursor-pointer pointer-events-auto"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

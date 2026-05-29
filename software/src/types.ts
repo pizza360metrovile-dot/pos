@@ -58,7 +58,7 @@ export interface Order {
   type: OrderType;
   customerName?: string;
   tableNumber?: string;
-  status: 'pending' | 'in-progress' | 'completed' | 'held' | 'refunded';
+  status: 'pending' | 'in-progress' | 'completed' | 'held';
   createdAt: number;
   updatedAt: number;
   notes?: string;
@@ -66,6 +66,13 @@ export interface Order {
   deliveryCharge?: number;
   deliveryChargeWaived?: boolean;
   deliveryChargeWaivedReason?: string;
+  discountType?: 'percent' | 'flat' | null;
+  discountValue?: number;
+  discountAmount?: number;
+  isDeleted?: boolean;
+  deletedAt?: number | null;
+  deletedReason?: string | null;
+  deletedBy?: string | null;
 }
 
 export interface KotSnapshot {
@@ -138,6 +145,7 @@ export interface StockLog {
   reason: 'sale' | 'restock' | 'adjustment' | 'import' | string;
   remainingAfter: number;
   createdAt: number;
+  note?: string;
 }
 
 export interface ModifierGroup {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Building2, 
   Receipt,
@@ -21,6 +22,7 @@ import {
   Key
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
+import { db } from '../lib/db';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -140,6 +142,7 @@ const InputField = ({ label, type = "text", value, onChange, placeholder, unit, 
 );
 
 export default function Settings() {
+  const navigate = useNavigate();
   const { 
     settings, 
     updateSettings, 
@@ -150,12 +153,67 @@ export default function Settings() {
     logout,
     subscription,
     activateLicense,
-    syncLicenses
+    syncLicenses,
+    cloudSync,
+    setCloudSync,
+    deleteAllAppData
   } = useStore();
+
+  const [daysLeft, setDaysLeft] = useState<number | null>(null);
+
+  const calculateDaysRemaining = async () => {
+    try {
+      const record = await db.table('appMeta').get('_xe');
+      if (record && record.value !== undefined) {
+        const expiresAt = Number(record.value);
+        const now = Date.now();
+        const diffMs = expiresAt - now;
+        const calcDaysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        setDaysLeft(calcDaysLeft);
+      } else {
+        setDaysLeft(0);
+      }
+    } catch (err) {
+      setDaysLeft(0);
+    }
+  };
+
+  useEffect(() => {
+    calculateDaysRemaining();
+  }, [subscription?.expiryDate]);
+
+  const currentDaysLeft = daysLeft !== null ? daysLeft : (subscription ? Math.ceil((subscription.expiryDate - Date.now()) / (1000 * 60 * 60 * 24)) : 0);
+  
+  let badgeText = '';
+  let badgeColorClass = '';
+  let circleColorClass = '';
+
+  if (currentDaysLeft > 0) {
+    badgeText = `${currentDaysLeft} days remaining`;
+    if (currentDaysLeft > 30) {
+      badgeColorClass = "bg-success/10 text-success border-success/20";
+      circleColorClass = "border-success/30 text-success";
+    } else if (currentDaysLeft > 10) {
+      badgeColorClass = "bg-amber-500/10 text-amber-500 border-amber-500/20";
+      circleColorClass = "border-amber-500/30 text-amber-500";
+    } else {
+      badgeColorClass = "bg-danger/10 text-danger border-danger/20";
+      circleColorClass = "border-danger/30 text-danger";
+    }
+  } else {
+    badgeText = "Expired";
+    badgeColorClass = "bg-danger/10 text-danger border-danger/20";
+    circleColorClass = "border-danger/30 text-danger";
+  }
 
   const [formData, setFormData] = useState(settings);
   const [activeSection, setActiveSection] = useState('profile');
   const [savedStates, setSavedStates] = useState<Record<string, boolean>>({});
+
+  // Deletion and Backup states
+  const [deleteModalStep, setDeleteModalStep] = useState<0 | 1 | 2>(0);
+  const [keepMenuItems, setKeepMenuItems] = useState(true);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
 
   // Licensing Page States
   const [restaurantId, setRestaurantId] = useState('');
@@ -207,6 +265,9 @@ export default function Settings() {
   // Backup state
   const [importFile, setImportFile] = useState<File | null>(null);
   const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [parsedBackup, setParsedBackup] = useState<any>(null);
+  const [restoreStep, setRestoreStep] = useState<0 | 1 | 2>(0);
+  const [restoreConfirmInput, setRestoreConfirmInput] = useState('');
 
   // Password state
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
@@ -279,24 +340,38 @@ export default function Settings() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `rms-backup-${format(new Date(), 'yyyy-MM-dd')}.json`;
+    a.download = `rms-backup-${format(new Date(), 'yyyy-MM-dd-HH-mm')}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleImport = async () => {
-    if (!importFile) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const json = event.target?.result as string;
-        await importData(json);
+    if (!parsedBackup) return;
+    try {
+      await importData(parsedBackup);
+      
+      const backupDate = parsedBackup.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd HH:mm') : 'Unknown Date';
+      toast.success(`Backup restored successfully. App restored to ${backupDate}`);
+      
+      setTimeout(() => {
         window.location.reload();
-      } catch (err) {
-        toast.error('Failed to import data. Please check the file format.');
+      }, 2000);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to import data. Please check the file format.');
+    }
+  };
+
+  const handleFinalDelete = async () => {
+    try {
+      await deleteAllAppData(keepMenuItems);
+      setDeleteModalStep(0);
+      setDeleteConfirmInput('');
+      if (keepMenuItems) {
+        navigate('/');
       }
-    };
-    reader.readAsText(importFile);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const onPasswordUpdate = async (e: React.FormEvent) => {
@@ -531,13 +606,18 @@ export default function Settings() {
               
               {formData.deliveryChargeEnabled && (
                 <div className="space-y-6 animate-in slide-in-from-top-4 duration-300">
-                  <InputField 
-                    label="Delivery Charge Amount" 
-                    type="number" 
-                    value={formData.deliveryChargeAmount} 
-                    onChange={v => setFormData({...formData, deliveryChargeAmount: v})} 
-                    unit={formData.currency}
-                  />
+                  <div className="space-y-1">
+                    <InputField 
+                      label="Default Delivery Charge" 
+                      type="number" 
+                      value={formData.deliveryChargeAmount} 
+                      onChange={v => setFormData({...formData, deliveryChargeAmount: v})} 
+                      unit={formData.currency}
+                    />
+                    <p className="text-[11px] text-text-secondary opacity-80 pl-1">
+                      This is the default value. You can change it per order in POS.
+                    </p>
+                  </div>
                   <InputField 
                     label="Delivery Charge Label" 
                     value={formData.deliveryChargeLabel} 
@@ -560,23 +640,25 @@ export default function Settings() {
                  <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-accent">Logistics Summary</h3>
                  <div className="space-y-5 font-mono text-text-secondary">
                     <div className="flex justify-between items-center text-[11px]">
-                      <span className="uppercase tracking-widest opacity-60">Subtotal Matrix</span>
-                      <span className="font-bold text-text-primary">{formData.currencyPosition === 'before' && formData.currency}25.00{formData.currencyPosition === 'after' && formData.currency}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[11px]">
-                      <span className="uppercase tracking-widest opacity-60">{formData.deliveryChargeLabel || 'Delivery Fee'}</span>
-                      <span className={cn("font-bold", formData.deliveryChargeEnabled ? "text-danger" : "text-text-placeholder line-through")}>
+                      <span className="uppercase tracking-widest opacity-60">Default Delivery Charge</span>
+                      <span className={cn("font-bold", formData.deliveryChargeEnabled ? "text-text-primary" : "text-text-placeholder line-through")}>
                         {formData.currencyPosition === 'before' && formData.currency}
                         {(formData.deliveryChargeEnabled ? (formData.deliveryChargeAmount || 0) : 0).toFixed(2)}
                         {formData.currencyPosition === 'after' && formData.currency}
                       </span>
                     </div>
-                    <div className="pt-6 border-t border-border-light flex justify-between items-center">
-                      <span className="text-[12px] font-bold uppercase tracking-widest text-text-placeholder">Total Prediction</span>
-                      <span className="text-3xl font-extrabold text-text-primary tracking-tighter">
-                        {formData.currencyPosition === 'before' && formData.currency}
-                        {(25 + (formData.deliveryChargeEnabled ? (formData.deliveryChargeAmount || 0) : 0)).toFixed(2)}
-                        {formData.currencyPosition === 'after' && formData.currency}
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="uppercase tracking-widest opacity-60">Tax on Delivery</span>
+                      <span className="font-bold text-text-primary">
+                        {formData.deliveryChargeEnabled && formData.deliveryChargeTaxable ? (
+                          <>
+                            {formData.currencyPosition === 'before' && formData.currency}
+                            {((formData.deliveryChargeAmount || 0) * (formData.taxPercentage || 0) / 100).toFixed(2)}
+                            {formData.currencyPosition === 'after' && formData.currency}
+                          </>
+                        ) : (
+                          "None"
+                        )}
                       </span>
                     </div>
                  </div>
@@ -788,8 +870,30 @@ export default function Settings() {
                        onChange={(e) => {
                          const file = e.target.files?.[0];
                          if (file) {
-                           setImportFile(file);
-                           setShowImportConfirm(true);
+                           const reader = new FileReader();
+                           reader.onload = (event) => {
+                             try {
+                               const content = event.target?.result as string;
+                               const parsed = JSON.parse(content);
+                               
+                               if (!parsed || typeof parsed !== 'object') {
+                                 toast.error('Invalid backup file');
+                                 return;
+                               }
+                               if (!parsed.data || typeof parsed.data !== 'object') {
+                                 toast.error('Corrupted backup file');
+                                 return;
+                               }
+                               
+                               setImportFile(file);
+                               setParsedBackup(parsed);
+                               setRestoreStep(1);
+                               setShowImportConfirm(true);
+                             } catch (parseErr) {
+                               toast.error('Invalid backup file');
+                             }
+                           };
+                           reader.readAsText(file);
                          }
                        }}
                        className="absolute inset-0 opacity-0 cursor-pointer"
@@ -800,29 +904,236 @@ export default function Settings() {
                   </div>
                 </>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center space-y-8 animate-fade-in py-4">
-                   <div className="text-center">
-                      <div className="text-[11px] font-bold uppercase text-accent tracking-widest mb-2">File Loaded</div>
-                      <div className="text-[15px] font-bold text-text-primary font-mono tracking-tight">{importFile?.name}</div>
-                   </div>
-                   <div className="flex gap-4 w-full px-4">
-                      <button 
-                        onClick={() => { setShowImportConfirm(false); setImportFile(null); }}
-                        className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-border-light"
-                      >
-                         Abort
-                      </button>
-                      <button 
-                        onClick={handleImport}
-                        className="flex-[2] py-4 bg-danger text-white rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-danger/90 shadow-xl shadow-danger/20"
-                      >
-                         Confirm & Sync
-                      </button>
-                   </div>
+                <div className="h-full flex flex-col items-center justify-center space-y-6 animate-fade-in py-4 w-full">
+                  {restoreStep === 1 ? (
+                    <>
+                      <div className="text-center space-y-2">
+                        <div className="text-[11px] font-bold uppercase text-accent tracking-widest">Backup Verified</div>
+                        <div className="text-[15px] font-bold text-text-primary font-mono tracking-tight">{importFile?.name}</div>
+                        <div className="text-[12px] text-text-muted mt-2 font-medium tracking-tight">
+                          Backup created: <span className="font-bold text-text-primary">{parsedBackup?.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd HH:mm') : 'Unknown Date'}</span>
+                        </div>
+                        <p className="text-[11px] text-danger font-bold uppercase tracking-tight leading-normal max-w-xs mx-auto mt-4">
+                          This will replace ALL current app data with data from this backup file.
+                        </p>
+                      </div>
+                      <div className="flex gap-4 w-full px-4 mt-4">
+                        <button 
+                          onClick={() => { 
+                            setShowImportConfirm(false); 
+                            setImportFile(null); 
+                            setParsedBackup(null);
+                            setRestoreStep(0);
+                            setRestoreConfirmInput('');
+                          }}
+                          className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-border-light"
+                        >
+                          Abort
+                        </button>
+                        <button 
+                          onClick={() => setRestoreStep(2)}
+                          className="flex-[2] py-4 bg-danger text-white rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-danger/90 shadow-xl shadow-danger/20"
+                        >
+                          Restore This Backup
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-center space-y-4 w-full px-4">
+                        <div className="text-[11px] font-bold uppercase text-danger tracking-widest leading-loose">
+                          Type "RESTORE" to confirm
+                        </div>
+                        <input
+                          type="text"
+                          value={restoreConfirmInput}
+                          onChange={(e) => setRestoreConfirmInput(e.target.value)}
+                          placeholder='Type "RESTORE"'
+                          className="w-full text-center tracking-widest font-black uppercase p-3 bg-bg-surface border border-border-light rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-danger"
+                        />
+                      </div>
+                      <div className="flex gap-4 w-full px-4 mt-6">
+                        <button 
+                          onClick={() => {
+                            setRestoreStep(1);
+                            setRestoreConfirmInput('');
+                          }}
+                          className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-border-light"
+                        >
+                          Back
+                        </button>
+                        <button 
+                          disabled={restoreConfirmInput !== 'RESTORE'}
+                          onClick={handleImport}
+                          className="flex-[2] py-4 bg-danger text-white rounded-lg font-bold uppercase text-[11px] tracking-widest hover:bg-danger/90 shadow-xl shadow-danger/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Confirm Restore
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
           </div>
+
+          {/* Cloud Sync & Delete All App Data */}
+          <div className="mt-10 pt-10 border-t border-border-light space-y-8 animate-fade-in">
+             {/* Cloud Sync Toggle */}
+             <div className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-bg-surface-2 rounded-xl border border-border-light gap-4 transition-all hover:bg-bg-surface hover:shadow-md">
+               <div className="space-y-1">
+                 <div className="flex items-center gap-3">
+                   <h4 className="text-[14px] font-bold text-text-primary uppercase tracking-tight">Cloud Sync</h4>
+                   <span className={cn(
+                     "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
+                     cloudSync ? "bg-success/10 text-success" : "bg-text-disabled/15 text-text-muted"
+                   )}>
+                     {cloudSync ? 'Sync Enabled' : 'Sync Disabled'}
+                   </span>
+                 </div>
+                 <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight text-left">
+                   When disabled, app works fully offline and does not connect to Cloud
+                 </p>
+               </div>
+               <button
+                 onClick={() => setCloudSync(!cloudSync)}
+                 className={cn(
+                   "w-12 h-6 rounded-full transition-all relative flex items-center p-1 cursor-pointer shrink-0",
+                   cloudSync ? "bg-accent" : "bg-text-disabled"
+                 )}
+               >
+                 <div className={cn(
+                   "w-4 h-4 rounded-full bg-white transition-all shadow-sm",
+                   cloudSync ? "translate-x-6" : "translate-x-0"
+                 )} />
+               </button>
+             </div>
+
+             {/* Delete All App Data */}
+             <div className="p-6 bg-danger/5 rounded-xl border border-danger/10 space-y-4 md:space-y-0 md:flex md:items-center md:justify-between transition-all hover:bg-danger/[0.08]">
+               <div className="space-y-1 text-left">
+                 <h4 className="text-[14px] font-bold text-danger uppercase tracking-tight">Delete All App Data</h4>
+                 <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight">
+                   Permanently deletes all orders, records, inventory and settings. Cannot be undone.
+                 </p>
+               </div>
+               <button
+                 onClick={() => {
+                   setDeleteModalStep(1);
+                   setKeepMenuItems(true);
+                   setDeleteConfirmInput('');
+                 }}
+                 className="btn-danger w-full md:w-auto px-6 py-3.5 text-[11px] tracking-widest shadow-lg shadow-danger/10 shrink-0 font-bold uppercase transition-all active:scale-95 cursor-pointer pointer-events-auto"
+               >
+                 Delete All App Data
+               </button>
+             </div>
+          </div>
+
+          {/* Delete Data Modal Step 1 */}
+          {deleteModalStep === 1 && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+              <div className="w-full max-w-lg bg-bg-surface border border-border-light rounded-2xl shadow-2xl p-8 space-y-6 animate-scale-in">
+                <div className="space-y-2 text-left">
+                  <h3 className="text-[17px] font-extrabold text-text-primary uppercase tracking-tight leading-none text-left">Delete App Data</h3>
+                  <p className="text-text-muted text-[13px] font-medium text-left">Configure deletion scope and settings</p>
+                </div>
+
+                {/* Warning Banner */}
+                <div className="bg-danger/10 border border-danger/20 rounded-xl p-5 flex items-start gap-4">
+                  <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+                  <div className="text-left">
+                    <p className="text-[12px] font-bold text-danger uppercase tracking-wide leading-snug">
+                      ⚠ This will permanently delete all app data. This cannot be undone.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Scope Checkbox Card */}
+                <label className="flex items-start gap-4 p-5 bg-bg-surface-2 border border-border-light rounded-xl hover:bg-bg-surface transition-colors cursor-pointer group text-left">
+                  <input
+                    type="checkbox"
+                    checked={keepMenuItems}
+                    onChange={(e) => setKeepMenuItems(e.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-border-light text-accent focus:ring-accent accent-accent shrink-0 cursor-pointer"
+                  />
+                  <div className="space-y-1">
+                    <span className="text-[12px] font-black text-text-primary uppercase tracking-tight select-none">
+                      Keep menu items and categories
+                    </span>
+                    <p className="text-[11px] font-medium text-text-muted leading-relaxed uppercase tracking-tight select-none">
+                      Your food items and categories will be preserved so you don't need to re-enter them
+                    </p>
+                  </div>
+                </label>
+
+                {/* Footer Actions */}
+                <div className="flex gap-4 pt-4 border-t border-border-light">
+                  <button
+                    onClick={() => setDeleteModalStep(0)}
+                    className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-border-light transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => setDeleteModalStep(2)}
+                    className="flex-1 py-4 bg-accent text-white rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-accent/90 shadow-lg shadow-accent/20 transition-colors"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Data Modal Step 2 */}
+          {deleteModalStep === 2 && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+              <div className="w-full max-w-lg bg-bg-surface border border-border-light rounded-2xl shadow-2xl p-8 space-y-6 animate-scale-in">
+                <div className="space-y-2 text-left">
+                  <h3 className="text-[17px] font-extrabold text-text-primary uppercase tracking-tight leading-none text-left">Are you absolutely sure?</h3>
+                  <p className="text-text-muted text-[13px] font-medium leading-relaxed text-left">
+                    This is the final checkpoint. Proceeding will wipe out database records.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2 text-left">
+                    <label className="input-label text-danger font-black">Type DELETE to confirm</label>
+                    <input
+                      type="text"
+                      value={deleteConfirmInput}
+                      onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                      placeholder="DELETE"
+                      className="w-full p-4 rounded-xl bg-bg-surface-2 border border-border-light text-text-primary font-bold placeholder-text-placeholder tracking-widest focus:border-accent uppercase text-center focus:ring-1 focus:ring-accent focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-4 pt-4 border-t border-border-light">
+                  <button
+                    onClick={() => setDeleteModalStep(1)}
+                    className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-border-light transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleFinalDelete}
+                    disabled={deleteConfirmInput !== 'DELETE'}
+                    className={cn(
+                      "flex-1 py-4 text-white rounded-xl font-bold uppercase text-[11px] tracking-widest transition-all",
+                      deleteConfirmInput === 'DELETE'
+                        ? "bg-danger hover:bg-danger/90 shadow-lg shadow-danger/20 cursor-pointer"
+                        : "bg-text-disabled cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    Confirm Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Section 7: ACCOUNT & SECURITY */}
@@ -937,36 +1248,32 @@ export default function Settings() {
                   </div>
                   <span className={cn(
                     "px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest border",
-                    !subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0
-                      ? "bg-danger/10 text-danger border-danger/20" 
-                      : "bg-success/10 text-success border-success/20"
+                    badgeColorClass
                   )}>
-                    {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 ? 'Expired' : 'Active'}
+                    {badgeText}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-6 pt-4 border-t border-border-light">
                   <div className={cn(
                     "w-20 h-20 rounded-full border-4 flex flex-col items-center justify-center shrink-0 font-bold",
-                    !subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
-                      ? "border-danger/30 text-danger" 
-                      : "border-success/30 text-success"
+                    circleColorClass
                   )}>
                     <span className="text-2xl font-black leading-none">
-                      {subscription ? Math.max(0, Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000))) : 0}
+                      {Math.max(0, currentDaysLeft)}
                     </span>
                     <span className="text-[9px] font-black uppercase tracking-tight mt-1">Days</span>
                   </div>
                   <div>
                     <h4 className="font-bold text-[14px] text-text-primary uppercase tracking-tight">
-                      {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
+                      {currentDaysLeft <= 0 
                         ? 'Activation Required' 
                         : 'Premium Access Active'}
                     </h4>
                     <p className="text-[11px] text-text-muted mt-1 uppercase tracking-tight leading-relaxed">
-                      {!subscription || Math.ceil((subscription.expiryDate - Date.now()) / (24 * 60 * 60 * 1000)) <= 0 
+                      {currentDaysLeft <= 0 
                         ? 'All POS capabilities will expire or restrict. Fill a valid cryptographic voucher key below to restore system lifespans.' 
-                        : `Your subscription is valid until ${new Date(subscription.expiryDate).toLocaleDateString()}. Additional valid license keys will stack.`}
+                        : `Your subscription is valid until ${new Date(subscription ? subscription.expiryDate : 0).toLocaleDateString()}. Additional valid license keys will stack.`}
                     </p>
                   </div>
                 </div>

@@ -356,8 +356,12 @@ export default function Inventory() {
                               <Edit3 className="w-4 h-4" />
                            </button>
                            <button 
-                            onClick={() => deleteIngredient(i.id)}
-                            className="p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              deleteIngredient(i.id);
+                            }}
+                            className="relative z-10 p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
                            >
                               <Trash2 className="w-4 h-4" />
                            </button>

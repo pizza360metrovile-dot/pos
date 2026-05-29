@@ -37,21 +37,23 @@ const ITEMS_PER_PAGE = 25;
 
 export default function Records() {
   const { 
-    orders, settings, deleteOrder, updateOrder, 
+    orders, settings, deleteOrder, updateOrder, restoreOrder,
     cart, clearCart, menuItems, retrieveOrder: storeRetrieveOrder, 
     cancelHeldOrder: storeCancelHeldOrder, activeOrder, addOrder,
     kotSnapshots, orderType, customerName, tableNumber,
-    deliveryChargeWaived, deliveryChargeWaivedReason
+    deliveryChargeWaived, deliveryChargeWaivedReason, user
   } = useStore();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<OrderType | 'all'>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'completed' | 'held' | 'refunded' | 'in-progress' | 'all'>('completed');
+  const [selectedStatus, setSelectedStatus] = useState<'completed' | 'held' | 'in-progress' | 'all' | 'deleted'>('completed');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editValues, setEditValues] = useState<Partial<Order>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [retrievalConfirmData, setRetrievalConfirmData] = useState<Order | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<Order | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
 
   // Date range filter states
   const [selectedRange, setSelectedRange] = useState<'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'all' | 'custom'>('today');
@@ -119,15 +121,35 @@ export default function Records() {
     return { start: null, end: null };
   }, [selectedRange, customStart, customEnd]);
 
-  // Keep date-filtered orders for calculations
+  // Keep date-filtered NON-deleted orders for calculations
   const rangeOrders = useMemo(() => {
     return orders.filter(order => {
+      if (order.isDeleted) return false;
       const orderDate = order.createdAt;
       if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
       if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
       return true;
     });
   }, [orders, dateBounds]);
+
+  // Keep date-filtered deleted orders for calculations
+  const deletedRangeOrders = useMemo(() => {
+    return orders.filter(order => {
+      if (!order.isDeleted) return false;
+      const orderDate = order.createdAt;
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+      return true;
+    });
+  }, [orders, dateBounds]);
+
+  const deletedCount = useMemo(() => {
+    return orders.filter(o => o.isDeleted).length;
+  }, [orders]);
+
+  const totalValueDeleted = useMemo(() => {
+    return orders.filter(o => o.isDeleted).reduce((sum, o) => sum + (o.total || 0), 0);
+  }, [orders]);
 
   // Calculations derived dynamically from selected range
   const rangeStats = useMemo(() => {
@@ -136,6 +158,8 @@ export default function Records() {
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
     const totalTax = rangeOrders.reduce((sum, o) => sum + (o.taxAmount || 0), 0);
     const totalDeliveryCharges = rangeOrders.reduce((sum, o) => sum + (o.deliveryCharge || 0), 0);
+
+    const totalDiscounts = rangeOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
 
     // Top selling item by quantity sold
     const itemQuantities: { [name: string]: number } = {};
@@ -161,6 +185,7 @@ export default function Records() {
       averageOrderValue,
       totalTax,
       totalDeliveryCharges,
+      totalDiscounts,
       topItem: topItemQty > 0 ? { name: topItemName, quantity: topItemQty } : null
     };
   }, [rangeOrders]);
@@ -175,8 +200,14 @@ export default function Records() {
         order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (order.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = selectedType === 'all' || order.type === selectedType;
-      const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
-      return matchesSearch && matchesType && matchesStatus;
+      
+      if (selectedStatus === 'deleted') {
+        return order.isDeleted && matchesSearch && matchesType;
+      } else {
+        if (order.isDeleted) return false;
+        const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
+        return matchesSearch && matchesType && matchesStatus;
+      }
     });
   }, [orders, searchTerm, selectedType, selectedStatus, dateBounds]);
 
@@ -186,18 +217,49 @@ export default function Records() {
     return filteredOrders.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredOrders, currentPage]);
 
-  const handleDeleteRecord = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteRecord = async (order: Order, e: React.MouseEvent) => {
     e.stopPropagation();
+    setDeletingOrder(order);
+    setDeleteReason('');
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingOrder) return;
+    if (deleteReason.trim().length < 5) {
+      toast.error('Reason for deletion must be at least 5 characters.');
+      return;
+    }
+
+    const loggedInEmail = user?.email || 'operator@restaurant.com';
+    await deleteOrder(deletingOrder.id, deleteReason.trim(), loggedInEmail);
+
+    if (selectedOrder?.id === deletingOrder.id) {
+      setSelectedOrder(null);
+    }
+
+    setDeletingOrder(null);
+    setDeleteReason('');
+  };
+
+  const handleRestoreRecord = async (order: Order) => {
     const confirmed = await showConfirmModal({
-      title: 'Delete Record',
-      message: 'Are you sure you want to delete this record? This action will be logged.',
-      confirmLabel: 'Delete',
+      title: `Restore Order #${order.orderNumber}?`,
+      message: `It will return to its original status (${order.status.toUpperCase()}).`,
+      confirmLabel: 'Restore',
       cancelLabel: 'Cancel',
-      isDanger: true
+      isDanger: false
     });
     if (confirmed) {
-      await deleteOrder(id);
-      if (selectedOrder?.id === id) setSelectedOrder(null);
+      await restoreOrder(order.id);
+      if (selectedOrder?.id === order.id) {
+        setSelectedOrder({
+          ...order,
+          isDeleted: false,
+          deletedAt: null,
+          deletedReason: null,
+          deletedBy: null
+        });
+      }
     }
   };
 
@@ -441,6 +503,19 @@ export default function Records() {
               </div>
             )}
 
+            {/* Total Discounts Given (only if > 0) */}
+            {rangeStats.totalDiscounts > 0 && (
+              <div className="card-main p-6 border-l-4 border-l-danger">
+                <div className="flex items-center gap-3 mb-2">
+                  <FileText className="w-4 h-4 text-danger" />
+                  <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Total Discounts Given</span>
+                </div>
+                <div className="text-2xl font-extrabold text-danger font-mono tracking-tighter">
+                  {settings.currency}{rangeStats.totalDiscounts.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            )}
+
             {/* Top Selling Item */}
             <div className="card-main p-6 border-l-4 border-l-teal-500">
               <div className="flex items-center gap-3 mb-2">
@@ -481,16 +556,21 @@ export default function Records() {
               />
             </div>
             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light shadow-sm shrink-0">
-              {['all', 'in-progress', 'completed', 'held', 'refunded'].map(status => (
+              {['all', 'in-progress', 'completed', 'held', 'deleted'].map(status => (
                 <button
                   key={status}
                   onClick={() => setSelectedStatus(status as any)}
                   className={clsx(
-                    "px-5 py-2 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all",
+                    "px-5 py-2 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-1.5 cursor-pointer",
                     selectedStatus === status ? "bg-bg-surface text-accent shadow-sm border border-border-light" : "text-text-muted hover:text-text-secondary"
                   )}
                 >
-                  {status}
+                  <span>{status}</span>
+                  {status === 'deleted' && deletedCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-danger text-white rounded-full leading-none">
+                      {deletedCount}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -498,32 +578,133 @@ export default function Records() {
         </header>
 
         <div className="w-full min-h-[60vh] max-w-none p-[20px_24px] bg-bg-surface rounded-lg shadow-sm flex flex-col no-print">
+          {selectedStatus === 'deleted' && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
+              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
+                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">Total Deleted Orders</span>
+                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">{deletedCount}</div>
+              </div>
+              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
+                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">Total Value Deleted</span>
+                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">
+                  {settings.currency}{totalValueDeleted.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
+                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">This Period Deletions</span>
+                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">{deletedRangeOrders.length}</div>
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-x-auto">
             <table className="w-full min-w-[840px] border-collapse">
-              <thead>
-                <tr>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '80px', minWidth: '80px' }}>Order #</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Date/Time</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Customer</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Total</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '110px', minWidth: '110px' }}>Status</th>
-                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '100px', minWidth: '100px' }}>Actions</th>
-                </tr>
-              </thead>
+              {selectedStatus === 'deleted' ? (
+                <thead>
+                  <tr>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Order #</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Original Date</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Original Total</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Deleted At</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left">Reason</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Deleted By</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '80px', minWidth: '80px' }}>Restore</th>
+                  </tr>
+                </thead>
+              ) : (
+                <thead>
+                  <tr>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '80px', minWidth: '80px' }}>Order #</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Date/Time</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Customer</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Total</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '110px', minWidth: '110px' }}>Status</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '100px', minWidth: '100px' }}>Actions</th>
+                  </tr>
+                </thead>
+              )}
               <tbody className="divide-y divide-border-light">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-12 text-center">
+                    <td colSpan={selectedStatus === 'deleted' ? 9 : 8} className="p-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3 py-12">
                         <AlertCircle className="w-8 h-8 text-text-placeholder" />
                         <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest">
-                          No orders in this period
+                          {selectedStatus === 'deleted' ? 'No deleted orders in this period' : 'No orders in this period'}
                         </span>
                       </div>
                     </td>
                   </tr>
+                ) : selectedStatus === 'deleted' ? (
+                  paginatedOrders.map(order => (
+                    <tr 
+                      key={order.id} 
+                      onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
+                      className={clsx(
+                        "hover:bg-bg-surface-2 cursor-pointer transition-colors group h-[56px] min-h-[56px] border-b border-border-light text-text-muted opacity-85",
+                        selectedOrder?.id === order.id && "bg-bg-surface-2"
+                      )}
+                    >
+                      <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '120px', minWidth: '120px' }}>
+                        <div className="flex items-center gap-1.5">
+                          <span>{order.orderNumber}</span>
+                          <span className="px-1 py-0.5 text-[8px] bg-danger text-white rounded font-sans uppercase font-black tracking-wider leading-none shrink-0">
+                            DELETED
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-[14px_16px] text-[14px]" style={{ width: '120px', minWidth: '120px' }}>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-text-primary">{format(order.createdAt, 'HH:mm')}</span>
+                          <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{format(order.createdAt, 'dd MMM yy')}</span>
+                        </div>
+                      </td>
+                      <td className="p-[14px_16px] text-[14px]" style={{ width: '100px', minWidth: '100px' }}>
+                        <span className="badge sm font-bold uppercase tracking-widest">
+                          {order.type}
+                        </span>
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] font-mono font-bold text-text-primary" style={{ width: '60px', minWidth: '60px' }}>
+                        {order.items.reduce((acc, it) => acc + (it.quantity || 0), 0)}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] font-mono font-bold tracking-tight text-text-primary" style={{ width: '100px', minWidth: '100px' }}>
+                        {settings.currency}{(order.total || 0).toFixed(2)}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px]" style={{ width: '140px', minWidth: '140px' }}>
+                        {order.deletedAt ? (
+                          <div className="flex flex-col text-danger">
+                            <span className="font-bold">{format(order.deletedAt, 'HH:mm')}</span>
+                            <span className="text-[10px] uppercase font-bold tracking-widest mt-0.5">{format(order.deletedAt, 'dd MMM yy')}</span>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className="p-[14px_16px] text-xs truncate max-w-[200px]" title={order.deletedReason || ''}>
+                        {order.deletedReason || '—'}
+                      </td>
+                      <td className="p-[14px_16px] text-xs truncate max-w-[150px]" title={order.deletedBy || ''}>
+                        {order.deletedBy || '—'}
+                      </td>
+                      <td className="p-[14px_16px] text-right" style={{ width: '80px', minWidth: '80px' }} onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRestoreRecord(order);
+                            }}
+                            className="p-2 bg-success-light border border-success-border rounded-lg text-success hover:bg-success hover:text-white transition-all shadow-sm cursor-pointer pointer-events-auto"
+                            title="Restore order"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 ) : (
                   paginatedOrders.map(order => (
                     <tr 
@@ -563,15 +744,13 @@ export default function Records() {
                             "w-2 h-2 rounded-full inline-block shadow-sm",
                             order.status === 'completed' && "bg-success shadow-success/20",
                             order.status === 'in-progress' && "bg-warning shadow-warning/20",
-                            order.status === 'held' && "bg-accent shadow-accent/20",
-                            order.status === 'refunded' && "bg-danger shadow-danger/20"
+                            order.status === 'held' && "bg-accent shadow-accent/20"
                           )} />
                           <span className={clsx(
                             "badge sm font-bold uppercase tracking-wider",
                             order.status === 'completed' && "badge-success",
                             order.status === 'in-progress' && "badge-warning",
-                            order.status === 'held' && "badge-accent",
-                            order.status === 'refunded' && "badge-danger"
+                            order.status === 'held' && "badge-accent"
                           )}>
                             {order.status}
                           </span>
@@ -580,8 +759,13 @@ export default function Records() {
                       <td className="p-[14px_16px] text-right" style={{ width: '100px', minWidth: '100px' }}>
                         <div className="flex justify-end items-center gap-2">
                           <button 
-                            onClick={(e) => handleDeleteRecord(order.id, e)} 
-                            className="p-2 bg-danger-light border border-danger-border rounded-lg text-danger hover:bg-danger hover:text-white transition-all opacity-0 group-hover:opacity-100 shadow-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleDeleteRecord(order, e);
+                            }} 
+                            className="relative z-10 p-2 bg-danger-light border border-danger-border rounded-lg text-danger hover:bg-danger hover:text-white transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100 shadow-sm cursor-pointer pointer-events-auto"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -679,7 +863,6 @@ export default function Records() {
                         <option value="in-progress">IN PROGRESS</option>
                         <option value="completed">COMPLETED</option>
                         <option value="held">HELD</option>
-                        <option value="refunded">REFUNDED</option>
                       </select>
                     </div>
                     <div>
@@ -709,6 +892,32 @@ export default function Records() {
                 </div>
               ) : (
                 <>
+                  {selectedOrder.isDeleted && (
+                    <div className="bg-danger/5 border-l-4 border-l-danger p-4 rounded-r-xl border border-danger/10 mb-6 space-y-2">
+                      <div className="flex items-center gap-2 text-danger font-bold text-xs uppercase tracking-wider">
+                        <AlertCircle className="w-4 h-4" />
+                        <span>Deleted Record Audit Trail</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] mt-2 pt-2 border-t border-danger/10">
+                        <div>
+                          <span className="block text-text-muted uppercase font-bold tracking-tight">Deleted At</span>
+                          <span className="font-mono font-bold text-text-primary">
+                            {selectedOrder.deletedAt ? format(selectedOrder.deletedAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-text-muted uppercase font-bold tracking-tight">Deleted By</span>
+                          <span className="font-semibold text-text-primary">{selectedOrder.deletedBy || '—'}</span>
+                        </div>
+                      </div>
+                      <div className="text-[11px] pt-1">
+                        <span className="block text-text-muted uppercase font-bold tracking-tight mb-0.5">Reason for Deletion</span>
+                        <p className="text-text-primary bg-bg-surface border border-border-light rounded px-2.5 py-2 italic leading-relaxed mt-1">
+                          "{selectedOrder.deletedReason || 'No reason provided'}"
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <section className="grid grid-cols-2 gap-4">
                     <div className="bg-bg-surface-2 p-4 rounded-xl border border-border-light shadow-sm">
                       <div className="text-[12px] text-text-muted uppercase tracking-wider font-bold mb-1">Sync Phase</div>
@@ -784,6 +993,26 @@ export default function Records() {
 
                   <section className="pt-6 border-t border-border-light space-y-3">
                     <div className="flex justify-between text-[12px] text-text-muted uppercase tracking-wider font-bold">
+                      <span>Subtotal</span>
+                      <span className="font-mono text-text-primary">{settings.currency}{(selectedOrder.subtotal || 0).toFixed(2)}</span>
+                    </div>
+                    {selectedOrder.discountAmount !== undefined && selectedOrder.discountAmount > 0 && (
+                      <>
+                        <div className="flex justify-between text-[12px] text-text-muted uppercase tracking-wider font-bold">
+                          <span>Discount</span>
+                          <span className="font-semibold text-text-primary">
+                            {selectedOrder.discountType === 'percent'
+                              ? `${selectedOrder.discountValue ?? 0}%`
+                              : `Rs. ${selectedOrder.discountValue ?? 0}`}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[12px] text-danger uppercase tracking-wider font-bold">
+                          <span>Discount Amount</span>
+                          <span className="font-mono font-bold">-{settings.currency}{(selectedOrder.discountAmount || 0).toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between text-[12px] text-text-muted uppercase tracking-wider font-bold">
                       <span>Taxation Weight</span>
                       <span className="font-mono text-text-primary">{settings.currency}{(selectedOrder.taxAmount || 0).toFixed(2)}</span>
                     </div>
@@ -807,38 +1036,62 @@ export default function Records() {
                     </div>
                   </section>
 
-                  <div className="pt-4 flex gap-4">
-                    {selectedOrder.status === 'held' && (
-                      <button 
-                        onClick={() => handleRetrieveOrder(selectedOrder)}
-                        className="btn-primary flex-1 py-3 text-[11px] font-bold uppercase tracking-widest shadow-xl transition-all group"
-                      >
-                        <RotateCcw className="w-4 h-4 mr-2 group-hover:rotate-180 transition-transform duration-700 inline-block -mt-0.5" />
-                        Restore Session
-                      </button>
+                  <div className="pt-4 flex gap-4 animate-in fade-in duration-200">
+                    {selectedOrder.isDeleted ? (
+                      <>
+                        <button 
+                          onClick={() => handleRestoreRecord(selectedOrder)}
+                          className="btn-primary flex-1 py-3 text-[11px] font-bold uppercase tracking-widest shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          Restore Order
+                        </button>
+                        <button 
+                          className="w-12 py-3 bg-bg-surface border border-border-light hover:bg-bg-surface-2 text-text-muted hover:text-text-primary rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {selectedOrder.status === 'held' && (
+                          <button 
+                            onClick={() => handleRetrieveOrder(selectedOrder)}
+                            className="btn-primary flex-1 py-3 text-[11px] font-bold uppercase tracking-widest shadow-xl transition-all group cursor-pointer"
+                          >
+                            <RotateCcw className="w-4 h-4 mr-2 group-hover:rotate-180 transition-transform duration-700 inline-block -mt-0.5" />
+                            Restore Session
+                          </button>
+                        )}
+                        {selectedOrder.status === 'held' && (
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleCancelHeldOrder(selectedOrder.id, selectedOrder.orderNumber);
+                            }}
+                            className="relative z-10 w-12 py-3 bg-danger-light border border-danger-border text-danger hover:bg-danger hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        {selectedOrder.status !== 'held' && (
+                          <button 
+                            onClick={handleStartEdit}
+                            className="btn-secondary flex-1 py-3 text-[11px] font-bold uppercase tracking-widest shadow-sm group transition-all cursor-pointer"
+                          >
+                            <Edit2 className="w-4 h-4 mr-2 text-text-muted group-hover:text-accent transition-colors inline-block -mt-0.5" />
+                            Refine Entry
+                          </button>
+                        )}
+                        <button 
+                          className="w-12 py-3 bg-bg-surface border border-border-light hover:bg-bg-surface-2 text-text-muted hover:text-text-primary rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      </>
                     )}
-                    {selectedOrder.status === 'held' && (
-                      <button 
-                        onClick={() => handleCancelHeldOrder(selectedOrder.id, selectedOrder.orderNumber)}
-                        className="w-12 py-3 bg-danger-light border border-danger-border text-danger hover:bg-danger hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                    {selectedOrder.status !== 'held' && (
-                      <button 
-                        onClick={handleStartEdit}
-                        className="btn-secondary flex-1 py-3 text-[11px] font-bold uppercase tracking-widest shadow-sm group transition-all"
-                      >
-                        <Edit2 className="w-4 h-4 mr-2 text-text-muted group-hover:text-accent transition-colors inline-block -mt-0.5" />
-                        Refine Entry
-                      </button>
-                    )}
-                    <button 
-                      className="w-12 py-3 bg-bg-surface border border-border-light hover:bg-bg-surface-2 text-text-muted hover:text-text-primary rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95"
-                    >
-                      <Printer className="w-4 h-4" />
-                    </button>
                   </div>
                 </>
               )}
@@ -886,6 +1139,70 @@ export default function Records() {
                 </div>
               </div>
            </div>
+        </div>
+      )}
+
+      {/* Custom Soft Delete Confirmation Modal */}
+      {deletingOrder && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-[2px] z-[110] flex items-center justify-center p-4 animate-fade-in no-print bg-black/40">
+          <div 
+            className="bg-bg-surface border border-border-light flex flex-col text-text-primary animate-in zoom-in-95 duration-300 relative shadow-modal"
+            style={{
+              width: 'min(90vw, 480px)',
+              padding: '24px',
+              borderRadius: '16px',
+            }}
+          >
+            <header className="pb-4 border-b border-border-light flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2 text-danger">
+                <AlertCircle className="w-5 h-5" />
+                <h2 className="text-sm font-bold uppercase tracking-[0.1em]">Delete Order #{deletingOrder.orderNumber}?</h2>
+              </div>
+              <button 
+                onClick={() => { setDeletingOrder(null); setDeleteReason(''); }} 
+                className="p-1.5 bg-bg-surface-2 hover:bg-border-light border border-border-light rounded-md text-text-muted hover:text-text-primary transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </header>
+
+            <div className="py-6 space-y-4">
+              
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-text-muted block">
+                  Reason for deletion <span className="text-danger">*</span> (required, min 5 chars)
+                </label>
+                <textarea
+                  placeholder="e.g. Customer cancelled, Wrong order entered, Test order..."
+                  className="w-full bg-bg-surface-2 border border-border-light focus:border-accent rounded-lg p-3 text-xs focus:outline-none min-h-[90px] resize-none leading-relaxed transition-all"
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-border-light flex gap-3">
+              <button
+                onClick={() => { setDeletingOrder(null); setDeleteReason(''); }}
+                className="flex-1 py-2.5 border border-border-light bg-bg-surface-2 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-border-light transition-all text-text-muted cursor-pointer font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleteReason.trim().length < 5}
+                className={clsx(
+                  "flex-1 py-2.5 rounded-lg text-[10px] uppercase tracking-widest transition-all font-bold",
+                  deleteReason.trim().length < 5
+                    ? "bg-danger/20 border border-danger/20 text-danger/50 cursor-not-allowed"
+                    : "bg-danger text-white hover:bg-danger-dark cursor-pointer shadow-lg shadow-danger/20"
+                )}
+              >
+                Delete Order
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -346,16 +346,22 @@ export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; 
             <span>Subtotal:</span>
             <span>{settings.currency}{(order.subtotal || 0).toFixed(2)}</span>
           </div>
-          {order.deliveryCharge !== undefined && order.deliveryCharge > 0 && (
+          {order.discountAmount !== undefined && order.discountAmount > 0 && (
             <div className="flex justify-between">
-              <span>{settings.deliveryChargeLabel}:</span>
-              <span>{settings.currency}{(order.deliveryCharge || 0).toFixed(2)}</span>
+              <span>
+                Discount
+                {order.discountType === 'percent'
+                  ? ` (${order.discountValue}%)`
+                  : ''
+                }
+              </span>
+              <span>-{settings.currency}{(order.discountAmount || 0).toFixed(2)}</span>
             </div>
           )}
-          {order.deliveryChargeWaived && (
+          {order.deliveryCharge !== undefined && order.deliveryCharge > 0 && (
             <div className="flex justify-between">
-              <span>{settings.deliveryChargeLabel}:</span>
-              <span>{settings.currency}0.00 (Waived)</span>
+              <span>{settings.deliveryChargeLabel || 'Delivery Fee'}:</span>
+              <span>{settings.currency}{(order.deliveryCharge || 0).toFixed(2)}</span>
             </div>
           )}
           {settings.showTaxLine && (

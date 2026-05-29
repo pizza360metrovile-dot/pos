@@ -132,6 +132,38 @@ export class RMSDatabase extends Dexie {
         delete (group as any).categoryId;
       });
     });
+
+    this.version(14).stores({
+      orderItemModifiers: '++id, orderItemId, modifierGroupId, orderId'
+    });
+
+    this.version(15).stores({}).upgrade(tx => {
+      return tx.table('orders').toCollection().modify(order => {
+        if (order.discountType === undefined) order.discountType = null;
+        if (order.discountValue === undefined) order.discountValue = 0;
+        if (order.discountAmount === undefined) order.discountAmount = 0;
+      });
+    });
+
+    this.version(16).stores({}).upgrade(tx => {
+      return tx.table('orders').toCollection().modify(order => {
+        if (order.isDeleted === undefined) order.isDeleted = false;
+        if (order.deletedAt === undefined) order.deletedAt = null;
+        if (order.deletedReason === undefined) order.deletedReason = null;
+        if (order.deletedBy === undefined) order.deletedBy = null;
+      });
+    });
+
+    this.version(17).stores({}).upgrade(tx => {
+      return tx.table('orders').toCollection().modify(order => {
+        if (order.status === 'refunded') {
+          order.status = 'completed';
+          order.isDeleted = true;
+          order.deletedReason = 'Refunded';
+          order.deletedAt = Date.now();
+        }
+      });
+    });
   }
 }
 
