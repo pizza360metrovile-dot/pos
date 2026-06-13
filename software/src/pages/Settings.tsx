@@ -19,7 +19,13 @@ import {
   Award,
   Copy,
   Check,
-  Key
+  Key,
+  Keyboard,
+  Lock,
+  Eye,
+  EyeOff,
+  Users,
+  Trash2
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
 import { db } from '../lib/db';
@@ -27,6 +33,8 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { motion } from 'motion/react';
+import { PROTECTION_PASSWORD } from '../constants';
 import { getRestaurantId, generateTestingKey } from '../services/licenseService';
 
 function cn(...inputs: ClassValue[]) {
@@ -39,8 +47,10 @@ const SECTIONS = [
   { id: 'delivery', label: 'Delivery', icon: Truck, description: 'Set delivery charges applied automatically to delivery orders' },
   { id: 'receipt', label: 'Receipt', icon: Printer, description: 'Customize what appears on the customer receipt when printed' },
   { id: 'kitchen', label: 'Kitchen & KOT', icon: ChefHat, description: 'Control how kitchen order tickets are printed and what they show' },
+  { id: 'cashiers', label: 'Cashiers', icon: Users, description: 'Add staff names who operate this terminal' },
   { id: 'backup', label: 'Data & Backup', icon: Database, description: 'Export your data for safekeeping or import a previous backup to restore' },
   { id: 'account', label: 'Account & Security', icon: Shield, description: 'Manage your login credentials and session security' },
+  { id: 'keyboard', label: 'Keyboard Shortcuts', icon: Keyboard, description: 'Configure keyboard shortcuts and navigation for the POS interface' },
   { id: 'license', label: 'POS License', icon: Award, description: 'Manage your POS licenses, view status, activate offline keys' }
 ];
 
@@ -156,9 +166,14 @@ export default function Settings() {
     syncLicenses,
     cloudSync,
     setCloudSync,
-    deleteAllAppData
+    deleteAllAppData,
+    cashiers = [],
+    addCashier,
+    toggleCashierActive,
+    deleteCashier
   } = useStore();
 
+  const [newCashierName, setNewCashierName] = useState('');
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
 
   const calculateDaysRemaining = async () => {
@@ -207,6 +222,14 @@ export default function Settings() {
   }
 
   const [formData, setFormData] = useState(settings);
+  const [businessDayCutoff, setBusinessDayCutoff] = useState('04:00');
+
+  useEffect(() => {
+    import('../utils/businessDayCalculation').then(({ getCachedCutoff }) => {
+      setBusinessDayCutoff(getCachedCutoff());
+    });
+  }, []);
+
   const [activeSection, setActiveSection] = useState('profile');
   const [savedStates, setSavedStates] = useState<Record<string, boolean>>({});
 
@@ -214,6 +237,44 @@ export default function Settings() {
   const [deleteModalStep, setDeleteModalStep] = useState<0 | 1 | 2>(0);
   const [keepMenuItems, setKeepMenuItems] = useState(true);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+
+  // Password Protection Modal States
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [passwordModalType, setPasswordModalType] = useState<'delete' | 'sync_disable' | null>(null);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [shakeModal, setShakeModal] = useState(false);
+
+  const handlePasswordModalConfirm = async () => {
+    if (passwordInput === PROTECTION_PASSWORD) {
+      setPasswordError('');
+      setPasswordModalOpen(false);
+      setPasswordInput('');
+      setShowPassword(false);
+      
+      if (passwordModalType === 'delete') {
+        setDeleteModalStep(1);
+        setKeepMenuItems(true);
+        setDeleteConfirmInput('');
+      } else if (passwordModalType === 'sync_disable') {
+        await setCloudSync(false);
+      }
+      setPasswordModalType(null);
+    } else {
+      setPasswordError('Incorrect password. Action not allowed.');
+      setPasswordInput('');
+      setShakeModal(true);
+    }
+  };
+
+  const handlePasswordModalCancel = () => {
+    setPasswordModalOpen(false);
+    setPasswordInput('');
+    setShowPassword(false);
+    setPasswordError('');
+    setPasswordModalType(null);
+  };
 
   // Licensing Page States
   const [restaurantId, setRestaurantId] = useState('');
@@ -224,6 +285,61 @@ export default function Settings() {
   const [generatedKey, setGeneratedKey] = useState('');
   const [copiedKey, setCopiedKey] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [keyboardShortcutsEnabled, setKeyboardShortcutsEnabled] = useState(true);
+  const [requireKOT, setRequireKOT] = useState(true);
+
+  useEffect(() => {
+    const loadKb = async () => {
+      try {
+        const entry = await db.table('appMeta').get('_kb');
+        if (entry) {
+          setKeyboardShortcutsEnabled(entry.value !== false);
+        }
+      } catch (err) {
+        console.error('Failed to load keyboard settings:', err);
+      }
+    };
+    const loadRequireKOT = async () => {
+      try {
+        const entry = await db.settings.where({ key: 'requireKOT' }).first();
+        if (entry) {
+          setRequireKOT(entry.value !== false);
+        } else {
+          setRequireKOT(true);
+        }
+      } catch (err) {
+        console.error('Failed to load requireKOT setting:', err);
+      }
+    };
+    loadKb();
+    loadRequireKOT();
+  }, []);
+
+  const handleToggleKeyboardShortcuts = async (value: boolean) => {
+    setKeyboardShortcutsEnabled(value);
+    try {
+      await db.table('appMeta').put({ key: '_kb', value });
+      toast.success(value ? 'Keyboard shortcuts enabled' : 'Keyboard shortcuts disabled');
+    } catch (err) {
+      console.error('Failed to save keyboard settings:', err);
+    }
+  };
+
+  const handleToggleRequireKOT = async (value: boolean) => {
+    setRequireKOT(value);
+    try {
+      const existing = await db.settings.where({ key: 'requireKOT' }).first();
+      if (existing) {
+        await db.settings.update(existing.id!, { value });
+      } else {
+        await db.settings.add({ key: 'requireKOT', value });
+      }
+      toast.success(value ? 'KOT requirement enabled' : 'KOT requirement disabled');
+    } catch (err) {
+      console.error('Failed to save requireKOT setting:', err);
+      toast.error('Failed to save setting');
+    }
+  };
 
   useEffect(() => {
     getRestaurantId().then(setRestaurantId);
@@ -268,6 +384,12 @@ export default function Settings() {
   const [parsedBackup, setParsedBackup] = useState<any>(null);
   const [restoreStep, setRestoreStep] = useState<0 | 1 | 2>(0);
   const [restoreConfirmInput, setRestoreConfirmInput] = useState('');
+
+  // Menu Seed Import state
+  const [showMenuImportModal, setShowMenuImportModal] = useState(false);
+  const [menuImportConfirmInput, setMenuImportConfirmInput] = useState('');
+  const [fetchedMenuSeedData, setFetchedMenuSeedData] = useState<any>(null);
+  const [isMenuImporting, setIsMenuImporting] = useState(false);
 
   // Password state
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
@@ -319,6 +441,10 @@ export default function Settings() {
   }, []);
 
   const handleSave = async (sectionId: string) => {
+    if (sectionId === 'profile') {
+      const { updateBusinessDayCutoff } = await import('../utils/businessDayCalculation');
+      await updateBusinessDayCutoff(businessDayCutoff);
+    }
     await updateSettings(formData);
     setSavedStates(prev => ({ ...prev, [sectionId]: true }));
     setTimeout(() => {
@@ -331,6 +457,28 @@ export default function Settings() {
     const el = document.getElementById(id);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const handleAddCashier = async () => {
+    if (!newCashierName.trim()) {
+      toast.error('Cashier name cannot be empty');
+      return;
+    }
+    await addCashier(newCashierName);
+    setNewCashierName('');
+  };
+
+  const handleDeleteCashier = async (cashierId: number, name: string) => {
+    const confirmed = await showConfirmModal({
+      title: "Remove Cashier",
+      message: `Remove ${name}? Past orders will keep their cashier name on record.`,
+      confirmLabel: "Remove",
+      cancelLabel: "Cancel",
+      isDanger: true
+    });
+    if (confirmed) {
+      await deleteCashier(cashierId);
     }
   };
 
@@ -371,6 +519,238 @@ export default function Settings() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleMenuImportTrigger = async () => {
+    try {
+      const response = await fetch('/menuSeed.json');
+      if (!response.ok) {
+        toast.error('Could not load menu file. Ensure menuSeed.json exists in public/ folder.');
+        return;
+      }
+      const data = await response.json();
+      if (!data || typeof data !== 'object') {
+        toast.error('Menu file format is invalid.');
+        return;
+      }
+      setFetchedMenuSeedData(data);
+      setMenuImportConfirmInput('');
+      setShowMenuImportModal(true);
+    } catch (err) {
+      toast.error('Could not load menu file. Ensure menuSeed.json exists in public/ folder.');
+    }
+  };
+
+  const executeMenuImport = async () => {
+    if (!fetchedMenuSeedData) return;
+    setIsMenuImporting(true);
+    const { user, cloudSync, syncToFirebase } = useStore.getState();
+    const syncActive = !!(user && cloudSync);
+
+    try {
+      // Step 1: Query and delete existing from firebase if sync active
+      if (syncActive) {
+        const oldCats = await db.categories.toArray();
+        for (const item of oldCats) {
+          await syncToFirebase('categories', item.id, null);
+        }
+        const oldItems = await db.menuItems.toArray();
+        for (const item of oldItems) {
+          await syncToFirebase('menuItems', item.id, null);
+        }
+        const oldGroups = await db.modifierGroups.toArray();
+        for (const item of oldGroups) {
+          await syncToFirebase('modifierGroups', item.id, null);
+        }
+        const oldOptions = await db.modifierOptions.toArray();
+        for (const item of oldOptions) {
+          await syncToFirebase('modifierOptions', item.id, null);
+        }
+        const oldDeals = await db.dealItems.toArray();
+        for (const item of oldDeals) {
+          await syncToFirebase('dealItems', item.id, null);
+        }
+      }
+
+      // Clear existing menu data
+      await db.modifierOptions.clear();
+      await db.modifierGroups.clear();
+      await db.dealItems.clear();
+      await db.menuItems.clear();
+      await db.categories.clear();
+    } catch (err: any) {
+      setIsMenuImporting(false);
+      toast.error(`Clear failed: ${err.message || err}`);
+      return;
+    }
+
+    try {
+      const categoryIdMap: Record<string, string | number> = {};
+      const menuItemIdMap: Record<string, string | number> = {};
+      const groupIdMap: Record<string, string | number> = {};
+
+      // Step 2: Insert categories
+      if (fetchedMenuSeedData.categories && Array.isArray(fetchedMenuSeedData.categories)) {
+        for (const category of fetchedMenuSeedData.categories) {
+          const catId = await db.categories.add({
+            name: category.name,
+            type: category.type
+          } as any);
+          categoryIdMap[category.seedId] = catId;
+          if (syncActive) {
+            const inserted = await db.categories.get(catId);
+            if (inserted) {
+              await syncToFirebase('categories', catId, inserted);
+            }
+          }
+        }
+      }
+
+      // Step 3: Insert menu items
+      if (fetchedMenuSeedData.menuItems && Array.isArray(fetchedMenuSeedData.menuItems)) {
+        for (const item of fetchedMenuSeedData.menuItems) {
+          const itemId = await db.menuItems.add({
+            name: item.name,
+            price: item.price,
+            categoryId: categoryIdMap[item.categorySeedId],
+            isActive: item.isActive,
+            isDeal: item.isDeal,
+            directStock: 0,
+            description: item.description || '',
+            stock: item.stock || 0,
+            minStock: item.minStock || 0,
+            createdAt: Date.now()
+          } as any);
+          menuItemIdMap[item.seedId] = itemId;
+          if (syncActive) {
+            const inserted = await db.menuItems.get(itemId);
+            if (inserted) {
+              await syncToFirebase('menuItems', itemId, inserted);
+            }
+          }
+        }
+      }
+
+      // Step 4: Insert modifier groups
+      if (fetchedMenuSeedData.modifierGroups && Array.isArray(fetchedMenuSeedData.modifierGroups)) {
+        for (const group of fetchedMenuSeedData.modifierGroups) {
+          const groupId = await db.modifierGroups.add({
+            menuItemId: menuItemIdMap[group.menuItemSeedId],
+            name: group.name,
+            type: group.type,
+            isRequired: group.isRequired,
+            sortOrder: 0
+          } as any);
+          groupIdMap[group.seedId] = groupId;
+          if (syncActive) {
+            const inserted = await db.modifierGroups.get(groupId);
+            if (inserted) {
+              await syncToFirebase('modifierGroups', groupId, inserted);
+            }
+          }
+        }
+      }
+
+      // Step 5: Insert modifier options
+      if (fetchedMenuSeedData.modifierOptions && Array.isArray(fetchedMenuSeedData.modifierOptions)) {
+        for (const option of fetchedMenuSeedData.modifierOptions) {
+          const optId = await db.modifierOptions.add({
+            groupId: groupIdMap[option.groupSeedId],
+            label: option.label,
+            additionalPrice: option.additionalPrice,
+            sortOrder: 0
+          } as any);
+          if (syncActive) {
+            const inserted = await db.modifierOptions.get(optId);
+            if (inserted) {
+              await syncToFirebase('modifierOptions', optId, inserted);
+            }
+          }
+        }
+      }
+
+      // Step 6: Insert deals
+      if (fetchedMenuSeedData.deals && Array.isArray(fetchedMenuSeedData.deals)) {
+        for (const deal of fetchedMenuSeedData.deals) {
+          const dealItemId = await db.menuItems.add({
+            name: deal.name,
+            price: deal.price,
+            categoryId: categoryIdMap[deal.categorySeedId],
+            isActive: deal.isActive,
+            isDeal: true,
+            directStock: 0,
+            description: deal.description || '',
+            stock: deal.stock || 0,
+            minStock: deal.minStock || 0,
+            createdAt: Date.now()
+          } as any);
+          if (syncActive) {
+            const inserted = await db.menuItems.get(dealItemId);
+            if (inserted) {
+              await syncToFirebase('menuItems', dealItemId, inserted);
+            }
+          }
+          if (deal.components && Array.isArray(deal.components)) {
+            for (const component of deal.components) {
+              const compIdStr = menuItemIdMap[component.componentSeedId].toString();
+              const dealItemIdVal = await db.dealItems.add({
+                dealMenuItemId: dealItemId.toString(),
+                componentMenuItemId: compIdStr,
+                quantity: component.quantity,
+                sortOrder: 0
+              });
+              if (syncActive) {
+                const inserted = await db.dealItems.get(dealItemIdVal);
+                if (inserted) {
+                  await syncToFirebase('dealItems', dealItemIdVal, inserted);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Step 7: Hydrate Zustand Store
+      const freshCategories = await db.categories.toArray();
+      const freshMenuItems = await db.menuItems.toArray();
+      const freshModifierGroups = await db.modifierGroups.toArray();
+      const freshModifierOptions = await db.modifierOptions.toArray();
+      const freshDealItems = await db.dealItems.toArray();
+
+      useStore.setState({
+        categories: freshCategories,
+        menuItems: freshMenuItems,
+        modifierGroups: freshModifierGroups,
+        modifierOptions: freshModifierOptions,
+        dealItems: freshDealItems
+      });
+
+      // Step 8: Success State
+      toast.success('Menu imported successfully from seed file');
+      setShowMenuImportModal(false);
+    } catch (err: any) {
+      // Rollback logic: Clear database state entirely of menu categories and items so we don't leave partial state
+      try {
+        await db.modifierOptions.clear();
+        await db.modifierGroups.clear();
+        await db.dealItems.clear();
+        await db.menuItems.clear();
+        await db.categories.clear();
+
+        useStore.setState({
+          categories: [],
+          menuItems: [],
+          modifierGroups: [],
+          modifierOptions: [],
+          dealItems: []
+        });
+      } catch (rollbackErr) {
+        console.error('Critical rollback failure:', rollbackErr);
+      }
+      toast.error(`Import failed: ${err.message || err}`);
+    } finally {
+      setIsMenuImporting(false);
     }
   };
 
@@ -468,6 +848,25 @@ export default function Settings() {
                 placeholder="123 Foodie St, Culinary District"
                 textarea
               />
+            </div>
+            <div className="md:col-span-2 border-t border-border-light/50 pt-6 mt-2 space-y-4">
+              <div className="max-w-md">
+                <InputField 
+                  label="Business Day Cutoff" 
+                  type="time"
+                  value={businessDayCutoff} 
+                  onChange={v => setBusinessDayCutoff(v)} 
+                />
+                <p className="text-[11px] text-text-muted leading-relaxed mt-2">
+                  Time when the business day resets. Orders after this time are counted as the next day.
+                </p>
+                <div className="mt-3 space-y-1 bg-bg-surface-2 p-3 rounded-lg border border-border-light text-[11px] text-text-secondary">
+                  <div className="font-semibold text-text-primary uppercase tracking-wider text-[9px] mb-1">Examples:</div>
+                  <p><strong>04:00</strong> for shops open till early morning (Default)</p>
+                  <p><strong>00:00</strong> for standard midnight cutoff</p>
+                  <p><strong>23:00</strong> for late-night venues</p>
+                </div>
+              </div>
             </div>
           </div>
           <SaveButton sectionId="profile" label="Save Profile" onSave={handleSave} isSaved={!!savedStates['profile']} />
@@ -758,6 +1157,16 @@ export default function Settings() {
           <SectionHeader {...SECTIONS[4]} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
             <div className="space-y-6">
+              <div className="space-y-2">
+                <Toggle 
+                  label="Require KOT before completing order" 
+                  value={requireKOT} 
+                  onChange={handleToggleRequireKOT} 
+                />
+                <p className="text-[10px] text-text-placeholder font-bold uppercase leading-relaxed tracking-tight px-2">
+                  When enabled, Kitchen button must be pressed first. Order moves to In-Progress before it can be completed or billed. When disabled, operator can complete or print bill directly.
+                </p>
+              </div>
               <Toggle label="Auto-print KOT on send to kitchen" value={formData.autoPrintKOT} onChange={v => setFormData({...formData, autoPrintKOT: v})} />
               <Toggle label="Show Customer Name on KOT" value={formData.showCustomerNameOnKOT} onChange={v => setFormData({...formData, showCustomerNameOnKOT: v})} />
               <Toggle label="Show Order Type on KOT" value={formData.showOrderTypeOnKOT} onChange={v => setFormData({...formData, showOrderTypeOnKOT: v})} />
@@ -819,11 +1228,87 @@ export default function Settings() {
           <SaveButton sectionId="kitchen" label="Save Kitchen Settings" onSave={handleSave} isSaved={!!savedStates['kitchen']} />
         </section>
 
+        {/* Section: CASHIERS */}
+        <section id="cashiers" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 transition-all hover:shadow-md relative z-20 pointer-events-auto">
+          <SectionHeader {...SECTIONS[5]} />
+          <div className="space-y-8">
+            {/* Add Cashier Inline Form */}
+            <div className="bg-bg-surface-2 p-6 rounded-lg border border-border-light">
+              <h3 className="text-[12px] font-bold uppercase tracking-widest text-text-secondary mb-4">Add New Operator</h3>
+              <div className="flex gap-4 max-w-lg">
+                <input
+                  type="text"
+                  value={newCashierName}
+                  onChange={(e) => setNewCashierName(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  className="flex-1 px-4 py-3 bg-bg-surface border border-border-light rounded-lg text-[13px] font-bold text-text-primary focus:outline-none focus:border-accent"
+                />
+                <button
+                  onClick={handleAddCashier}
+                  className="btn-primary px-6 py-3 text-[11px] font-bold uppercase tracking-widest cursor-pointer"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {/* Cashiers list */}
+            <div className="space-y-4">
+              <h3 className="text-[12px] font-bold uppercase tracking-widest text-text-secondary">Current Operators</h3>
+              {cashiers.length === 0 ? (
+                <div className="text-[12px] font-medium text-text-placeholder uppercase tracking-wider py-4 italic">No cashiers configured. Add an operator to get started.</div>
+              ) : (
+                <div className="border border-border-light rounded-lg overflow-hidden divide-y divide-border-light">
+                  {cashiers.map((cashier) => (
+                    <div key={cashier.id} className="flex items-center justify-between p-4 bg-bg-surface-2 transition-all hover:bg-bg-surface">
+                      <div className="flex items-center gap-3">
+                        <Users className={cn("w-4 h-4", cashier.isActive ? "text-accent" : "text-text-placeholder")} />
+                        <span className={cn("text-[13px] font-bold uppercase tracking-tight", cashier.isActive ? "text-text-primary" : "text-text-placeholder line-through")}>
+                          {cashier.name}
+                        </span>
+                        {!cashier.isActive && (
+                          <span className="text-[9px] font-extrabold uppercase tracking-widest bg-border-light text-text-placeholder px-2 py-0.5 rounded">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {/* Toggle Active Switch */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-text-placeholder">Active</span>
+                          <button
+                            onClick={() => toggleCashierActive(cashier.id!)}
+                            className={cn(
+                              "w-10 h-6 rounded-full p-1 transition-all flex items-center cursor-pointer",
+                              cashier.isActive ? "bg-accent justify-end" : "bg-border-light justify-start"
+                            )}
+                          >
+                            <span className={cn("w-4 h-4 bg-white rounded-full shadow-md transition-all", cashier.isActive ? "translate-x-4" : "translate-x-0")} />
+                          </button>
+                        </div>
+
+                        {/* Delete Button */}
+                        <button
+                          onClick={() => handleDeleteCashier(cashier.id!, cashier.name)}
+                          className="p-2 text-text-placeholder hover:text-danger rounded-lg transition-colors cursor-pointer"
+                          title="Remove Cashier"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
         {/* Section 6: DATA & BACKUP */}
         <section id="backup" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...SECTIONS[5]} />
+          <SectionHeader {...SECTIONS[6]} />
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Export Card */}
             <div className="bg-bg-surface-2 border border-border-light rounded-xl p-8 space-y-6 flex flex-col items-center text-center group transition-all hover:bg-bg-surface hover:shadow-md">
               <div className="w-16 h-16 bg-bg-surface border border-border-light rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
@@ -975,6 +1460,31 @@ export default function Settings() {
                 </div>
               )}
             </div>
+
+            {/* Menu Import Card */}
+            <div className="bg-bg-surface-2 border border-border-light rounded-xl p-8 space-y-6 flex flex-col items-center text-center group transition-all hover:bg-bg-surface hover:shadow-md">
+              <div className="w-16 h-16 bg-bg-surface border border-border-light rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <Database className="w-8 h-8 text-accent" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-[17px] font-bold text-text-primary tracking-tight uppercase">Menu Import</h3>
+                <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight">
+                  Load menu items, categories and modifiers from the menu seed file. Existing menu data will be replaced.
+                </p>
+              </div>
+              <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-4 flex items-start gap-4">
+                <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-[10px] text-amber-500 font-bold uppercase leading-tight text-left italic tracking-tight">
+                  This will replace all existing categories, menu items and modifiers. Orders and records will not be affected.
+                </p>
+              </div>
+              <button 
+                onClick={handleMenuImportTrigger}
+                className="mt-4 btn-primary w-full py-4 text-[11px] tracking-widest shadow-lg"
+              >
+                Import Menu from menuSeed.json
+              </button>
+            </div>
           </div>
 
           {/* Cloud Sync & Delete All App Data */}
@@ -996,7 +1506,14 @@ export default function Settings() {
                  </p>
                </div>
                <button
-                 onClick={() => setCloudSync(!cloudSync)}
+                 onClick={() => {
+                   if (cloudSync) {
+                     setPasswordModalType('sync_disable');
+                     setPasswordModalOpen(true);
+                   } else {
+                     setCloudSync(true);
+                   }
+                 }}
                  className={cn(
                    "w-12 h-6 rounded-full transition-all relative flex items-center p-1 cursor-pointer shrink-0",
                    cloudSync ? "bg-accent" : "bg-text-disabled"
@@ -1019,9 +1536,8 @@ export default function Settings() {
                </div>
                <button
                  onClick={() => {
-                   setDeleteModalStep(1);
-                   setKeepMenuItems(true);
-                   setDeleteConfirmInput('');
+                   setPasswordModalType('delete');
+                   setPasswordModalOpen(true);
                  }}
                  className="btn-danger w-full md:w-auto px-6 py-3.5 text-[11px] tracking-widest shadow-lg shadow-danger/10 shrink-0 font-bold uppercase transition-all active:scale-95 cursor-pointer pointer-events-auto"
                >
@@ -1044,7 +1560,7 @@ export default function Settings() {
                   <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
                   <div className="text-left">
                     <p className="text-[12px] font-bold text-danger uppercase tracking-wide leading-snug">
-                      ⚠ This will permanently delete all app data. This cannot be undone.
+                      This will permanently delete all app data. This cannot be undone.
                     </p>
                   </div>
                 </div>
@@ -1134,11 +1650,83 @@ export default function Settings() {
               </div>
             </div>
           )}
+
+          {/* Menu Import Confirmation Modal */}
+          {showMenuImportModal && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+              <div className="w-full max-w-lg bg-bg-surface border border-border-light rounded-2xl shadow-2xl p-8 space-y-6 animate-scale-in">
+                <div className="space-y-2 text-left">
+                  <h3 className="text-[17px] font-extrabold text-text-primary uppercase tracking-tight leading-none text-left">Import Menu from File?</h3>
+                  <p className="text-text-muted text-[13px] font-medium leading-relaxed text-left">
+                    All existing menu items, categories, modifiers and deals will be replaced.
+                  </p>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-5 flex items-start gap-4">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="text-left">
+                    <p className="text-[12px] font-bold text-amber-500 uppercase tracking-wide leading-snug">
+                      This action will wipe and replace existing categories, menu items, modifier groups, options and deals. Orders and records are safe.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2 text-left">
+                    <label className="input-label text-amber-500 font-black font-mono">Type IMPORT to confirm</label>
+                    <input
+                      type="text"
+                      value={menuImportConfirmInput}
+                      onChange={(e) => setMenuImportConfirmInput(e.target.value)}
+                      placeholder='Type "IMPORT"'
+                      disabled={isMenuImporting}
+                      className="w-full p-4 rounded-xl bg-bg-surface-2 border border-border-light text-text-primary font-bold placeholder-text-placeholder tracking-widest focus:border-accent uppercase text-center focus:ring-1 focus:ring-accent focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-4 pt-4 border-t border-border-light">
+                  <button
+                    onClick={() => {
+                      if (!isMenuImporting) {
+                        setShowMenuImportModal(false);
+                        setMenuImportConfirmInput('');
+                      }
+                    }}
+                    disabled={isMenuImporting}
+                    className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-border-light transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={executeMenuImport}
+                    disabled={menuImportConfirmInput !== 'IMPORT' || isMenuImporting}
+                    className={cn(
+                      "flex-[2] py-4 text-white rounded-xl font-bold uppercase text-[11px] tracking-widest transition-all relative flex justify-center items-center gap-2",
+                      (menuImportConfirmInput === 'IMPORT' && !isMenuImporting)
+                        ? "bg-accent hover:bg-accent/90 shadow-lg shadow-accent/20 cursor-pointer"
+                        : "bg-text-disabled cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    {isMenuImporting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Importing...
+                      </>
+                    ) : (
+                      'Confirm Import'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Section 7: ACCOUNT & SECURITY */}
         <section id="account" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 pb-32">
-          <SectionHeader {...SECTIONS[6]} />
+          <SectionHeader {...SECTIONS[7]} />
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div className="space-y-8">
@@ -1233,9 +1821,93 @@ export default function Settings() {
           </div>
         </section>
 
-        {/* Section 8: POS LICENSE */}
+        {/* Section 8: KEYBOARD SHORTCUTS */}
+        <section id="keyboard" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 pb-12">
+          <SectionHeader {...SECTIONS[8]} />
+          
+          <div className="space-y-6">
+            <Toggle 
+              value={keyboardShortcutsEnabled} 
+              onChange={handleToggleKeyboardShortcuts} 
+              label="Enable Keyboard Shortcuts" 
+            />
+
+            <div className="bg-bg-surface-2 border border-border-light rounded-xl p-6 md:p-8 space-y-6 shadow-sm">
+              <div className="flex items-center gap-3 border-b border-border-light pb-4">
+                <Keyboard className="w-5 h-5 text-accent animate-pulse" />
+                <h3 className="text-sm font-bold uppercase tracking-widest text-text-primary">Keyboard Shortcut Reference</h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-[12px]">
+                <div>
+                  <h4 className="font-extrabold uppercase tracking-widest text-[10px] text-accent mb-4">Navigation</h4>
+                  <table className="w-full text-left">
+                    <tbody>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">Arrow Keys</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Move focus pointer</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">Enter</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Select focused item</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">Escape</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Close modal or panel</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">Tab</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Next field in modal</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h4 className="font-extrabold uppercase tracking-widest text-[10px] text-accent mb-4">Categories</h4>
+                  <table className="w-full text-left">
+                    <tbody>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">A - Z</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Jump / cycle category</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <h4 className="font-extrabold uppercase tracking-widest text-[10px] text-accent mt-6 mb-4">POS Actions</h4>
+                  <table className="w-full text-left font-sans">
+                    <tbody>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">, or &lt;</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Send to Kitchen (KOT)</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">. or &gt;</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Print Bill</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">/ or ?</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Complete Order</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">; or :</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Open In-Progress panel</td>
+                      </tr>
+                      <tr className="border-b border-border-light/40 py-2.5 flex justify-between items-center h-10">
+                        <td className="font-bold text-text-secondary uppercase">' or "</td>
+                        <td className="font-mono bg-bg-surface border border-border-light px-2 py-0.5 rounded text-text-primary text-[11px] font-black">Open Held Orders panel</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 9: POS LICENSE */}
         <section id="license" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8 pb-32">
-          <SectionHeader {...SECTIONS[7]} />
+          <SectionHeader {...SECTIONS[9]} />
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             {/* Status Panel */}
@@ -1380,6 +2052,82 @@ export default function Settings() {
                   </div>
                 )}
               </div> */}
+
+          {/* Password Protection Modal */}
+          {passwordModalOpen && (
+            <div className="fixed inset-0 z-[201] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+              <motion.div
+                animate={shakeModal ? { x: [-10, 10, -10, 10, -5, 5, 0] } : {}}
+                transition={{ duration: 0.4 }}
+                onAnimationComplete={() => setShakeModal(false)}
+                className="w-full max-w-md bg-bg-surface border border-border-light rounded-2xl shadow-2xl p-8 space-y-6"
+              >
+                <div className="flex flex-col items-center text-center space-y-4">
+                  <div className="p-4 bg-danger/10 rounded-full">
+                    <Lock className="w-8 h-8 text-danger" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-[17px] font-extrabold text-text-primary uppercase tracking-tight leading-none">Protected Action</h3>
+                    <p className="text-text-muted text-[13px] font-medium leading-relaxed">
+                      {passwordModalType === 'delete' 
+                        ? 'Enter password to delete all app data' 
+                        : 'Enter password to disable cloud sync'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="relative">
+                    <input
+                      autoFocus
+                      type={showPassword ? 'text' : 'password'}
+                      value={passwordInput}
+                      onChange={(e) => {
+                        setPasswordInput(e.target.value);
+                        setPasswordError('');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handlePasswordModalConfirm();
+                        }
+                      }}
+                      placeholder="Enter password"
+                      className="w-full p-4 pr-12 rounded-xl bg-bg-surface-2 border border-border-light text-text-primary font-bold placeholder-text-placeholder focus:border-accent focus:ring-1 focus:ring-accent focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-text-placeholder hover:text-text-primary transition-colors focus:outline-hidden"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
+
+                  {passwordError && (
+                    <p className="text-danger-light text-xs font-bold uppercase tracking-tight text-center px-1">
+                      {passwordError}
+                    </p>
+                  )}
+                </div>
+
+                {/* Footer Actions */}
+                <div className="flex gap-4 pt-4 border-t border-border-light">
+                  <button
+                    onClick={handlePasswordModalCancel}
+                    className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-border-light transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handlePasswordModalConfirm}
+                    className="flex-1 py-4 bg-danger text-white rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-danger/90 shadow-lg shadow-danger/20 transition-all cursor-pointer"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
             </div>
           </div>
         </section>

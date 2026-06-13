@@ -17,7 +17,8 @@ import {
   Menu,
   ChevronLeft,
   X,
-  Circle
+  Circle,
+  Wallet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -33,6 +34,7 @@ import MenuManagement from './pages/MenuManagement';
 import Records from './pages/Records';
 import SettingsPage from './pages/Settings';
 import Inventory from './pages/Inventory';
+import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
 
@@ -45,6 +47,7 @@ const navItems = [
   { id: 'menu', icon: Utensils, label: 'Menu', path: '/menu' },
   { id: 'records', icon: History, label: 'Records', path: '/records' },
   { id: 'inventory', icon: Package, label: 'Inventory', path: '/inventory' },
+  { id: 'expenses', icon: Wallet, label: 'Expenses', path: '/expenses' },
   { id: 'settings', icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
@@ -66,6 +69,8 @@ const Sidebar = ({
   const logout = useStore(state => state.logout);
   const isOnline = useStore(state => state.isOnline);
   const cloudSync = useStore(state => state.cloudSync);
+  const isQuotaExceeded = useStore(state => state.isQuotaExceeded);
+  const isLicenseSyncFailed = useStore(state => state.isLicenseSyncFailed);
   const settings = useStore(state => state.settings);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -204,12 +209,19 @@ const Sidebar = ({
         {/* Status Indicators */}
         <div className={cn("flex flex-col gap-2", !isExpanded && "items-center")}>
           <div className="group relative flex items-center gap-3">
-             <div className={cn("w-2 h-2 rounded-full shrink-0", !cloudSync ? "bg-gray-400" : (isOnline ? "bg-success" : "bg-danger"))} />
-             {isExpanded && <span className={cn("text-[9px] font-black uppercase tracking-widest", !cloudSync ? "text-gray-400" : "text-text-sidebar")}>{!cloudSync ? 'Sync Disabled' : (isOnline ? 'Online' : 'Offline')}</span>}
+             <div className={cn(
+               "w-2 h-2 rounded-full shrink-0", 
+               !cloudSync ? "bg-gray-400" : (!isOnline ? "bg-danger" : (isQuotaExceeded || isLicenseSyncFailed ? "bg-amber-500 animate-pulse" : "bg-success"))
+             )} />
+             {isExpanded && (
+               <span className={cn("text-[9px] font-black uppercase tracking-widest", !cloudSync ? "text-gray-400" : "text-text-sidebar")}>
+                 {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
+               </span>
+             )}
              
              {!isExpanded && (
                 <div className="absolute left-full ml-4 px-3 py-1.5 bg-bg-sidebar-hover text-white text-[10px] font-black uppercase tracking-widest rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 translate-x-[-10px] group-hover:translate-x-0 z-[100] whitespace-nowrap">
-                  {!cloudSync ? 'Sync Disabled' : (isOnline ? 'Network Online' : 'Network Offline')}
+                  {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Network Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
                   <div className="absolute left-[-4px] top-1/2 -translate-y-1/2 w-2 h-2 bg-bg-sidebar-hover rotate-45" />
                 </div>
              )}
@@ -267,6 +279,8 @@ const TopBar = ({
   const ingredients = useStore(state => state.ingredients);
   const isOnline = useStore(state => state.isOnline);
   const cloudSync = useStore(state => state.cloudSync);
+  const isQuotaExceeded = useStore(state => state.isQuotaExceeded);
+  const isLicenseSyncFailed = useStore(state => state.isLicenseSyncFailed);
   const forceSync = useStore(state => state.forceSync);
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -321,9 +335,15 @@ const TopBar = ({
           </button>
           
           <div className="hidden lg:flex items-center gap-2">
-            <div className={cn("w-1.5 h-1.5 rounded-full", !cloudSync ? "bg-gray-400" : (isOnline ? "bg-success" : "bg-danger"))} />
-            <span className={cn("text-[10px] font-bold uppercase tracking-tight", !cloudSync ? "text-gray-400" : (isOnline ? "text-success" : "text-danger"))}>
-              {!cloudSync ? 'Sync Disabled' : (isOnline ? 'Online' : 'Offline')}
+            <div className={cn(
+              "w-1.5 h-1.5 rounded-full", 
+              !cloudSync ? "bg-gray-400" : (!isOnline ? "bg-danger" : (isQuotaExceeded || isLicenseSyncFailed ? "bg-amber-500 animate-pulse" : "bg-success"))
+            )} />
+            <span className={cn(
+              "text-[10px] font-bold uppercase tracking-tight", 
+              !cloudSync ? "text-gray-400" : (!isOnline ? "text-danger" : (isQuotaExceeded || isLicenseSyncFailed ? "text-amber-500" : "text-success"))
+            )}>
+              {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
             </span>
           </div>
         </div>
@@ -563,6 +583,7 @@ export default function App() {
             <Route path="/menu" element={<MenuManagement />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/records" element={<Records />} />
+            <Route path="/expenses" element={<Expenses />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

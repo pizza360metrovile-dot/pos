@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Edit2, Trash2, Tag, Utensils, X, Save, AlertCircle, 
   ChefHat, Package, LayoutGrid, ListChecks, GripVertical, Settings2,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, Gift
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
 import { MenuItem, Category, ModifierGroup, ModifierOption } from '../types';
@@ -17,8 +17,8 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export default function MenuManagement() {
   const { 
-    menuItems, categories, settings, 
-    addMenuItem, updateMenuItem, deleteMenuItem, 
+    menuItems, categories, settings, dealItems,
+    addMenuItem, updateMenuItem, deleteMenuItem, saveDealItems,
     addCategory, deleteCategory, updateCategory,
     modifierGroups, modifierOptions, saveModifierGroup, deleteModifierGroup
   } = useStore();
@@ -61,7 +61,17 @@ export default function MenuManagement() {
     isActive: true,
     stock: 0,
     minStock: 0,
+    isDeal: false
   });
+
+  const [localDealComponents, setLocalDealComponents] = useState<{
+    componentMenuItemId: string;
+    name: string;
+    categoryName: string;
+    quantity: number;
+  }[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // Modifier Form State
   const [modGroupName, setModGroupName] = useState('');
@@ -77,9 +87,28 @@ export default function MenuManagement() {
   const selectedItem = menuItems.find(item => String(item.id) === String(activeItemId));
 
   const handleOpenItemModal = (item?: MenuItem) => {
+    setSearchQuery('');
+    setIsDropdownOpen(false);
     if (item) {
       setEditingItem(item);
-      setFormData(item);
+      setFormData({
+        ...item,
+        isDeal: item.isDeal || false
+      });
+      const existingComponents = dealItems
+        .filter(d => String(d.dealMenuItemId) === String(item.id))
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map(d => {
+          const compItem = menuItems.find(i => String(i.id) === String(d.componentMenuItemId));
+          const cat = categories.find(c => String(c.id) === String(compItem?.categoryId));
+          return {
+            componentMenuItemId: String(d.componentMenuItemId),
+            name: compItem?.name || 'Unknown item',
+            categoryName: cat?.name || 'Unknown category',
+            quantity: d.quantity,
+          };
+        });
+      setLocalDealComponents(existingComponents);
     } else {
       setEditingItem(null);
       setFormData({
@@ -90,8 +119,10 @@ export default function MenuManagement() {
         isActive: true,
         stock: 0,
         minStock: 0,
-        directStock: 0
+        directStock: 0,
+        isDeal: false
       });
+      setLocalDealComponents([]);
     }
     setIsItemModalOpen(true);
   };
@@ -130,12 +161,30 @@ export default function MenuManagement() {
 
   const handleSaveItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (formData.isDeal) {
+      if (localDealComponents.length < 1) {
+        toast.error('Add at least one item to the deal.');
+        return;
+      }
+      const totalQty = localDealComponents.reduce((sum, c) => sum + c.quantity, 0);
+      if (totalQty < 2) {
+        toast.error('Deal must contain at least 2 total items.');
+        return;
+      }
+    }
+
     const finalData: Partial<MenuItem> = { 
       ...formData,
+      isDeal: !!formData.isDeal,
       categoryId: formData.categoryId ? Number(formData.categoryId) : undefined,
       disabledReason: formData.isActive ? null : 'manual'
     } as any;
-    if (selectedCategory?.type === 'prepared') {
+
+    if (formData.isDeal) {
+      finalData.stock = 0;
+      finalData.minStock = 0;
+      finalData.directStock = 0;
+    } else if (selectedCategory?.type === 'prepared') {
       finalData.stock = 0;
       finalData.minStock = 0;
       finalData.directStock = 0;
@@ -143,17 +192,102 @@ export default function MenuManagement() {
       finalData.directStock = finalData.stock;
     }
 
+    let savedItemId = editingItem?.id;
     if (editingItem) {
       await updateMenuItem({ ...editingItem, ...finalData } as MenuItem);
     } else {
+      const generatedId = crypto.randomUUID();
+      savedItemId = generatedId;
       const newItem: MenuItem = {
         ...finalData,
-        id: crypto.randomUUID(),
+        id: generatedId,
         createdAt: Date.now(),
       } as MenuItem;
       await addMenuItem(newItem);
     }
+
+    if (savedItemId) {
+      if (formData.isDeal) {
+        const formattedComponents = localDealComponents.map((c, idx) => ({
+          componentMenuItemId: c.componentMenuItemId,
+          quantity: c.quantity,
+          sortOrder: idx
+        }));
+        await saveDealItems(savedItemId, formattedComponents);
+      } else {
+        await saveDealItems(savedItemId, []);
+      }
+    }
+
     setIsItemModalOpen(false);
+  };
+
+  const searchCandidates = menuItems.filter(item => {
+    if (!item.isActive) return false;
+    if (item.isDeal) return false;
+    if (editingItem && String(item.id) === String(editingItem.id)) return false;
+    return true;
+  });
+
+  const filteredCandidates = searchCandidates.filter(item => {
+    const cat = categories.find(c => String(c.id) === String(item.categoryId));
+    const fullText = `${item.name} ${cat?.name || ''}`.toLowerCase();
+    return fullText.includes(searchQuery.toLowerCase());
+  });
+
+  const handleAddComponent = (item: MenuItem) => {
+    const existingIndex = localDealComponents.findIndex(d => String(d.componentMenuItemId) === String(item.id));
+    if (existingIndex !== -1) {
+      const updated = [...localDealComponents];
+      updated[existingIndex].quantity += 1;
+      setLocalDealComponents(updated);
+    } else {
+      const cat = categories.find(c => String(c.id) === String(item.categoryId));
+      setLocalDealComponents([
+        ...localDealComponents,
+        {
+          componentMenuItemId: String(item.id),
+          name: item.name,
+          categoryName: cat?.name || 'Unset',
+          quantity: 1
+        }
+      ]);
+    }
+    setSearchQuery('');
+    setIsDropdownOpen(false);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.setData('text/plain', index.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    const sourceIndexStr = e.dataTransfer.getData('text/plain');
+    if (sourceIndexStr === '') return;
+    const sourceIndex = parseInt(sourceIndexStr);
+    if (sourceIndex === targetIndex) return;
+    
+    const updated = [...localDealComponents];
+    const [removed] = updated.splice(sourceIndex, 1);
+    updated.splice(targetIndex, 0, removed);
+    setLocalDealComponents(updated);
+  };
+
+  const handleUpdateQuantity = (componentMenuItemId: string, qty: number) => {
+    setLocalDealComponents(prev => prev.map(c => 
+      String(c.componentMenuItemId) === String(componentMenuItemId) 
+        ? { ...c, quantity: Math.max(1, qty) } 
+        : c
+    ));
+  };
+
+  const handleRemoveComponent = (componentMenuItemId: string) => {
+    setLocalDealComponents(prev => prev.filter(c => String(c.componentMenuItemId) !== String(componentMenuItemId)));
   };
 
   const handleSaveCategory = async (e: React.FormEvent) => {
@@ -345,9 +479,21 @@ export default function MenuManagement() {
                       <tr key={item.id} className="hover:bg-bg-surface-2 transition-colors group">
                         <td className="px-8 py-6 text-[11px] font-bold text-text-placeholder font-mono">{index + 1}</td>
                         <td className="px-8 py-6">
-                          <div>
-                            <div className="font-bold text-sm text-text-primary uppercase tracking-tight">{item.name}</div>
-                            <div className="text-text-muted text-[11px] font-medium line-clamp-1 max-w-[200px] mt-1">{item.description || 'No descriptor provided.'}</div>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-text-primary uppercase tracking-tight">{item.name}</span>
+                              {item.isDeal && (
+                                <span className="inline-flex items-center gap-1 bg-accent/15 text-accent text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-wider border border-accent/25">
+                                  DEAL
+                                </span>
+                              )}
+                            </div>
+                            {item.isDeal && (
+                              <div className="text-[10px] text-accent/80 font-extrabold uppercase tracking-widest leading-none mt-0.5 mb-1">
+                                {dealItems.filter(d => String(d.dealMenuItemId) === String(item.id)).length} Components
+                              </div>
+                            )}
+                            <div className="text-text-muted text-[11px] font-medium line-clamp-1 max-w-[200px]">{item.description || 'No descriptor provided.'}</div>
                           </div>
                         </td>
                         <td className="px-8 py-6">
@@ -355,7 +501,11 @@ export default function MenuManagement() {
                             <span className="badge sm font-bold">
                               {categories.find(c => String(c.id) === String(item.categoryId))?.name || 'Unset'}
                             </span>
-                            {categories.find(c => String(c.id) === String(item.categoryId))?.type === 'stocked' ? (
+                            {item.isDeal ? (
+                              <span className="text-[10px] uppercase font-bold text-accent flex items-center gap-1.5">
+                                <Gift className="w-3 h-3" /> Bundle
+                              </span>
+                            ) : categories.find(c => String(c.id) === String(item.categoryId))?.type === 'stocked' ? (
                               <span className="text-[10px] uppercase font-bold text-success flex items-center gap-1.5">
                                 <Package className="w-3 h-3" /> Stocked
                               </span>
@@ -370,7 +520,9 @@ export default function MenuManagement() {
                           {settings.currency}{(item.price || 0).toFixed(2)}
                         </td>
                         <td className="px-8 py-6">
-                          {categories.find(c => String(c.id) === String(item.categoryId))?.type === 'stocked' ? (
+                          {item.isDeal ? (
+                            <span className="text-[11px] text-accent font-bold uppercase tracking-wider italic opacity-85">No direct stock</span>
+                          ) : categories.find(c => String(c.id) === String(item.categoryId))?.type === 'stocked' ? (
                             <div className="flex flex-col gap-1">
                               <span className={clsx(
                                 "text-sm font-bold font-mono",
@@ -740,6 +892,124 @@ export default function MenuManagement() {
                     </div>
 
                     <div>
+                      <label className="input-label mb-2 block font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Bundle Type</label>
+                      <div className="flex items-center justify-between p-3.5 bg-bg-surface-2/65 rounded-lg border border-border-light h-12">
+                        <div className="flex items-center gap-3">
+                          <Gift className="w-4 h-4 text-accent" />
+                          <span className="text-xs font-bold uppercase tracking-wider text-text-secondary select-none">This item is a Deal/Bundle</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, isDeal: !formData.isDeal })}
+                          className={clsx(
+                            "w-10 h-5.5 rounded-full p-1 transition-all flex items-center shrink-0",
+                            formData.isDeal ? "bg-accent justify-end" : "bg-text-disabled justify-start"
+                          )}
+                        >
+                          <div className="w-3.5 h-3.5 bg-white rounded-full shadow-sm" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {formData.isDeal && (
+                      <div className="p-4 bg-bg-surface-2/40 border border-border-light rounded-lg space-y-4">
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-wider text-accent">Bundle Contents</h3>
+                          <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider mt-0.5">Add items included in this deal</p>
+                        </div>
+
+                        {/* Search & Add component */}
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Search active menu items..."
+                            value={searchQuery}
+                            onChange={(e) => {
+                              setSearchQuery(e.target.value);
+                              setIsDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsDropdownOpen(true)}
+                            className="input-field py-2 text-xs"
+                          />
+                          {isDropdownOpen && searchQuery.trim() !== '' && (
+                            <div className="absolute z-10 w-full mt-1 bg-bg-surface border border-border-light rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-border-light/60">
+                              {filteredCandidates.length === 0 ? (
+                                <div className="p-3 text-xs text-text-muted font-bold uppercase tracking-wider text-center">No matching active items</div>
+                              ) : (
+                                filteredCandidates.map(item => {
+                                  const cat = categories.find(c => String(c.id) === String(item.categoryId));
+                                  return (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      onClick={() => handleAddComponent(item)}
+                                      className="w-full text-left px-4 py-2.5 hover:bg-bg-surface-2 transition-colors flex justify-between items-center"
+                                    >
+                                      <span className="text-xs font-bold text-text-primary">{item.name}</span>
+                                      <span className="text-[10px] bg-bg-surface-3 text-text-secondary px-2 py-0.5 rounded font-bold uppercase tracking-wider">{cat?.name || 'Category'}</span>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Component List */}
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {localDealComponents.map((component, index) => (
+                            <div
+                              key={component.componentMenuItemId}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, index)}
+                              onDragOver={handleDragOver}
+                              onDrop={(e) => handleDrop(e, index)}
+                              className="flex items-center gap-2 p-2 bg-bg-surface-2 border border-border-light rounded-lg select-none hover:border-border-light-strong transition-colors cursor-move"
+                            >
+                              {/* Drag handle */}
+                              <div className="text-text-muted shrink-0">
+                                <GripVertical className="w-4 h-4 cursor-grab" />
+                              </div>
+
+                              {/* Item Info */}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-bold text-text-primary truncate">{component.name}</div>
+                                <div className="text-[9px] text-text-muted uppercase font-black tracking-wider truncate">{component.categoryName}</div>
+                              </div>
+
+                              {/* Qty Input */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="text-[10px] text-text-muted font-bold uppercase tracking-wider">Qty:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={component.quantity}
+                                  onChange={(e) => handleUpdateQuantity(component.componentMenuItemId, parseInt(e.target.value) || 1)}
+                                  className="w-12 h-7 rounded border border-border-light bg-bg-surface text-center text-xs font-bold font-mono focus:outline-none focus:border-accent"
+                                />
+                              </div>
+
+                              {/* Remove Button */}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveComponent(component.componentMenuItemId)}
+                                className="p-1 text-danger hover:bg-danger/10 rounded transition-colors shrink-0"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+
+                          {localDealComponents.reduce((sum, c) => sum + c.quantity, 0) < 2 && (
+                            <div className="text-[10px] text-text-muted italic text-center py-2">
+                              Minimum 2 components required to save (Currently: {localDealComponents.reduce((sum, c) => sum + c.quantity, 0)})
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
                       <label className="input-label mb-2 block font-bold uppercase text-[11px] tracking-wider text-text-muted select-none">Active</label>
                       <div className="flex items-center justify-between p-3.5 bg-bg-surface-2/65 rounded-lg border border-border-light h-12">
                         <div className="flex items-center gap-3">
@@ -762,7 +1032,14 @@ export default function MenuManagement() {
 
                   {/* RIGHT COLUMN */}
                   <div className="space-y-4 border-l-0 md:border-l md:border-border-light/40 md:pl-6">
-                    {selectedCategory?.type === 'prepared' ? (
+                    {formData.isDeal ? (
+                      <div className="bg-bg-surface-2/40 rounded-lg p-4 border border-border-light flex items-start gap-2.5">
+                        <Gift className="w-5 h-5 shrink-0 text-accent animate-pulse" />
+                        <p className="text-[11px] text-accent font-black uppercase leading-relaxed tracking-wider">
+                          Bundle/Deal workflow: Deals never track direct stock.
+                        </p>
+                      </div>
+                    ) : selectedCategory?.type === 'prepared' ? (
                       <div className="bg-bg-surface-2/40 rounded-lg p-4 border border-border-light flex items-start gap-2.5">
                         <ChefHat className="w-5 h-5 shrink-0 text-accent animate-pulse" />
                         <p className="text-[11px] text-accent font-black uppercase leading-relaxed tracking-wider">

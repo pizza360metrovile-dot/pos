@@ -4,34 +4,40 @@
  */
 
 import { useState, useRef, useMemo, useEffect } from 'react';
-import { ShoppingCart, Plus, Minus, Trash2, Printer, CheckCircle, User, CreditCard, Utensils, Send, RotateCcw, X, Clock, AlertCircle, Truck, ShieldCheck, Square, CheckSquare, Edit3 } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Printer, CheckCircle, User, CreditCard, Utensils, Send, RotateCcw, X, Clock, AlertCircle, Truck, ShieldCheck, Square, CheckSquare, Edit3, Flame } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { toast } from 'sonner';
 import { useStore, showConfirmModal } from '../store/useStore';
+import { db } from '../lib/db';
 import { MenuItem, OrderType, Order, OrderItem, KotSnapshot, OrderItemModifier } from '../types';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, formatDistanceToNow, isAfter, subHours } from 'date-fns';
 import { KitchenTicket, CustomerReceipt, DeltaKitchenTicket } from '../components/PrintComponents';
 import ModifierModal from '../components/ModifierModal';
+import DealModal from '../components/DealModal';
 
 export default function POS() {
   const { 
     menuItems, categories, settings, addOrder, updateOrder, deleteOrder, orders,
-    cart, setCart, clearCart, addToCart, updateQuantity, removeFromCart, updateCartItem,
+    cart, setCart, clearCart, addToCart, addDealToCart, updateQuantity, removeFromCart, updateCartItem,
     orderType, updateOrderType, customerName, setCustomerName, 
     tableNumber, setTableNumber, activeOrder, setActiveOrder,
     retrieveOrder: storeRetrieveOrder, cancelHeldOrder: storeCancelHeldOrder,
-    kotSnapshots, addKotSnapshot, modifierGroups,
+    kotSnapshots, addKotSnapshot, modifierGroups, dealItems,
     discountType, setDiscountType, discountValue, setDiscountValue,
-    deliveryCharge, setDeliveryCharge
+    deliveryCharge, setDeliveryCharge,
+    cashiers = [], activeCashierName, setActiveCashierName, cancelOrder
   } = useStore();
   
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [isSuccess, setIsSuccess] = useState(false);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [isHeldPanelOpen, setIsHeldPanelOpen] = useState(false);
+  const [isInProgressPanelOpen, setIsInProgressPanelOpen] = useState(false);
   const [retrievalConfirmData, setRetrievalConfirmData] = useState<Order | null>(null);
+  const [cancellingOrder, setCancellingOrder] = useState<Order | null>(null);
+  const [cancellationReasonText, setCancellationReasonText] = useState('');
   const [unavailableItems, setUnavailableItems] = useState<string[]>([]);
   const [modifierModalData, setModifierModalData] = useState<{ 
     item: MenuItem; 
@@ -39,10 +45,81 @@ export default function POS() {
     initialModifiers?: OrderItemModifier[]; 
     initialNotes?: string;
   } | null>(null);
+  const [dealModalData, setDealModalData] = useState<{
+    dealItem: MenuItem;
+    components: any[];
+  } | null>(null);
 
   const [kotPrintOrder, setKotPrintOrder] = useState<Order | null>(null);
+  const [requireKOT, setRequireKOT] = useState<boolean>(true);
+
+  // ── KEYBOARD SHORTCUTS STATE & SERVICES ──
+  const [shortcutsEnabled, setShortcutsEnabled] = useState(true);
+  const [focusedZone, setFocusedZone] = useState<'menu' | 'cart' | 'panel-held' | 'panel-inprogress' | null>(null);
+  const [focusedItemIndex, setFocusedItemIndex] = useState<number | null>(null);
+  const [focusedCartItemIndex, setFocusedCartItemIndex] = useState<number | null>(null);
+  const [focusedPanelOrderIndex, setFocusedPanelOrderIndex] = useState<number | null>(null);
+  
+  // Category cycling state
+  const [lastLetterPressed, setLastLetterPressed] = useState<string>('');
+  const [lastLetterPressIndex, setLastLetterPressIndex] = useState<number>(0);
+
+  // Modal active focus tracking
+  const [modalSectionIndex, setModalSectionIndex] = useState<number>(0);
+  const [modalOptionIndex, setModalOptionIndex] = useState<number>(0);
+
+  // Load keyboard setting and requireKOT on mount
+  useEffect(() => {
+    const loadKbSetting = async () => {
+      try {
+        const entry = await db.table('appMeta').get('_kb');
+        if (entry) {
+          setShortcutsEnabled(entry.value !== false);
+        } else {
+          setShortcutsEnabled(true);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    const loadRequireKOT = async () => {
+      try {
+        const entry = await db.settings.where({ key: 'requireKOT' }).first();
+        if (entry) {
+          setRequireKOT(entry.value !== false);
+        } else {
+          setRequireKOT(true);
+        }
+      } catch (err) {
+        console.error('Failed to load requireKOT setting:', err);
+      }
+    };
+    loadKbSetting();
+    loadRequireKOT();
+  }, []);
+
+  // Reset modal navigation pointers when modifier modal toggled
+  useEffect(() => {
+    setModalSectionIndex(0);
+    setModalOptionIndex(0);
+    if (modifierModalData || dealModalData) {
+      setTimeout(() => {
+        const modalEl = document.querySelector('.fixed.z-\\[100\\], .fixed.inset-0.z-\\[100\\], [role="dialog"]') as HTMLElement;
+        if (modalEl) {
+          const firstBtn = modalEl.querySelector('.grid-cols-2 button:not([disabled]), button:not([disabled])') as HTMLElement;
+          if (firstBtn) {
+            firstBtn.classList.add('kb-focused');
+            firstBtn.focus();
+          }
+        }
+      }, 100);
+    }
+  }, [modifierModalData, dealModalData]);
+
   const [kotPrintNumber, setKotPrintNumber] = useState<number>(1);
   const [isPendingKOTPrint, setIsPendingKOTPrint] = useState(false);
+  const [isFirstKOTPrint, setIsFirstKOTPrint] = useState(true);
+  const [kotPrintPrevSentAt, setKotPrintPrevSentAt] = useState<number | undefined>(undefined);
 
   const receiptRef = useRef<HTMLDivElement>(null);
   const kotRef = useRef<HTMLDivElement>(null);
@@ -55,10 +132,14 @@ export default function POS() {
         setIsPendingKOTPrint(false);
         return;
       }
-      handleKOTPrint();
+      if (isFirstKOTPrint) {
+        handleKOTPrint();
+      } else {
+        handleDeltaKOTPrint();
+      }
       setIsPendingKOTPrint(false);
     }
-  }, [kotPrintOrder, isPendingKOTPrint]);
+  }, [kotPrintOrder, isPendingKOTPrint, isFirstKOTPrint]);
 
   const subtotal = useMemo(() => {
     return cart.reduce((acc, item) => {
@@ -100,13 +181,43 @@ export default function POS() {
   const total = afterDiscount + effectiveDeliveryCharge + taxAmount;
 
   const heldOrders = useMemo(() => orders.filter(o => o.status === 'held'), [orders]);
+  const inProgressOrders = useMemo(() => orders.filter(o => o.status === 'in-progress'), [orders]);
 
   const handleAddToCart = (item: MenuItem) => {
-    const hasModifiers = modifierGroups.some(g => String(g.menuItemId) === String(item.id));
-    if (hasModifiers) {
-      setModifierModalData({ item });
+    if (item.isDeal) {
+      const dItems = dealItems
+        .filter(di => String(di.dealMenuItemId) === String(item.id))
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      
+      const expandedComponents = [];
+      for (const dItem of dItems) {
+        const compMenuItem = menuItems.find(m => String(m.id) === String(dItem.componentMenuItemId));
+        if (compMenuItem) {
+          const groups = modifierGroups.filter(g => String(g.menuItemId) === String(compMenuItem.id));
+          for (let u = 1; u <= dItem.quantity; u++) {
+            expandedComponents.push({
+              _tempId: crypto.randomUUID(),
+              componentMenuItemId: compMenuItem.id,
+              componentName: compMenuItem.name,
+              unitIndex: u,
+              totalUnits: dItem.quantity,
+              applicableGroups: groups
+            });
+          }
+        }
+      }
+
+      setDealModalData({
+        dealItem: item,
+        components: expandedComponents
+      });
     } else {
-      addToCart(item);
+      const hasModifiers = modifierGroups.some(g => String(g.menuItemId) === String(item.id));
+      if (hasModifiers) {
+        setModifierModalData({ item });
+      } else {
+        addToCart(item);
+      }
     }
   };
 
@@ -141,6 +252,519 @@ export default function POS() {
       return true;
     });
   }, [menuItems, categories, activeCategory]);
+
+  const isSafeToFire = () => {
+    if (!shortcutsEnabled) return false;
+    const activeEl = document.activeElement;
+    if (activeEl) {
+      const tagName = activeEl.tagName;
+      if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') {
+        return false;
+      }
+      if (activeEl.hasAttribute('contenteditable') || activeEl.getAttribute('contenteditable') === 'true') {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleLetterKeyPress = (key: string) => {
+    const letter = key.toLowerCase();
+    const matchingCategories = categories.filter(c => 
+      c.name.toLowerCase().startsWith(letter)
+    );
+    
+    if (matchingCategories.length === 0) return;
+    
+    let targetCat = matchingCategories[0];
+    
+    if (matchingCategories.length === 1) {
+      setActiveCategory(String(targetCat.id));
+      focusFirstValidItemForCategory(String(targetCat.id));
+    } else {
+      let nextIdx = 0;
+      if (lastLetterPressed === letter) {
+        nextIdx = (lastLetterPressIndex + 1) % matchingCategories.length;
+      }
+      setLastLetterPressed(letter);
+      setLastLetterPressIndex(nextIdx);
+      targetCat = matchingCategories[nextIdx];
+      setActiveCategory(String(targetCat.id));
+      focusFirstValidItemForCategory(String(targetCat.id));
+      toast(`Category: ${targetCat.name}`, { duration: 1500 });
+    }
+  };
+
+  const focusFirstValidItemForCategory = (catId: string) => {
+    const baseItems = catId === 'all' 
+      ? menuItems
+      : menuItems.filter(i => String(i.categoryId) === String(catId));
+    
+    const visible = baseItems.filter(item => {
+      const category = categories.find(c => String(c.id) === String(item.categoryId));
+      if (category?.type === 'prepared') {
+        return item.isActive || item.disabledReason !== 'manual';
+      }
+      return true;
+    });
+
+    for (let i = 0; i < visible.length; i++) {
+      const item = visible[i];
+      const category = categories.find(c => String(c.id) === String(item.categoryId));
+      const isStocked = category?.type === 'stocked';
+      const isStockedDisabled = isStocked && (!item.isActive || item.directStock <= 0);
+      const isManualDisabled = item.disabledReason === 'manual' || (!item.isActive && item.disabledReason !== 'out_of_stock');
+      if (!(isStockedDisabled || isManualDisabled)) {
+        setFocusedZone('menu');
+        setFocusedItemIndex(i);
+        return;
+      }
+    }
+    setFocusedItemIndex(null);
+  };
+
+  const getGridCols = (): number => {
+    const gridEl = document.getElementById('menu-grid');
+    if (gridEl) {
+      const gridWidth = gridEl.clientWidth;
+      const firstCard = gridEl.firstElementChild as HTMLElement;
+      const cardWidth = firstCard ? firstCard.clientWidth : 140;
+      return Math.max(1, Math.floor(gridWidth / cardWidth));
+    }
+    return 4;
+  };
+
+  const isItemDisabled = (idx: number): boolean => {
+    const item = filteredItems[idx];
+    if (!item) return true;
+    const category = categories.find(c => String(c.id) === String(item.categoryId));
+    const isStocked = category?.type === 'stocked';
+    const isStockedDisabled = isStocked && (!item.isActive || item.directStock <= 0);
+    const isManualDisabled = item.disabledReason === 'manual' || (!item.isActive && item.disabledReason !== 'out_of_stock');
+    return isStockedDisabled || isManualDisabled;
+  };
+
+  const getNextValidIndex = (
+    startIndex: number,
+    direction: 'left' | 'right' | 'up' | 'down',
+    cols: number,
+    totalItems: number
+  ): number => {
+    let current = startIndex;
+    for (let attempt = 0; attempt < totalItems * 2; attempt++) {
+      if (direction === 'right') {
+        current = (current + 1) % totalItems;
+      } else if (direction === 'left') {
+        current = (current - 1 + totalItems) % totalItems;
+      } else if (direction === 'down') {
+        current = current + cols;
+        if (current >= totalItems) {
+          current = totalItems - 1;
+        }
+      } else if (direction === 'up') {
+        current = current - cols;
+        if (current < 0) {
+          current = 0;
+        }
+      }
+
+      if (!isItemDisabled(current)) {
+        return current;
+      }
+
+      if (direction === 'down' && current === totalItems - 1 && isItemDisabled(current)) {
+        let f = totalItems - 1;
+        while (f >= 0 && isItemDisabled(f)) {
+          f--;
+        }
+        return f >= 0 ? f : startIndex;
+      }
+      if (direction === 'up' && current === 0 && isItemDisabled(current)) {
+        let f = 0;
+        while (f < totalItems && isItemDisabled(f)) {
+          f++;
+        }
+        return f < totalItems ? f : startIndex;
+      }
+    }
+    return startIndex;
+  };
+
+  const handleMenuNavigation = (key: string) => {
+    const cols = getGridCols();
+    const total = filteredItems.length;
+    if (total === 0) return;
+
+    if (focusedItemIndex === null) {
+      for (let i = 0; i < total; i++) {
+        if (!isItemDisabled(i)) {
+          setFocusedZone('menu');
+          setFocusedItemIndex(i);
+          return;
+        }
+      }
+      return;
+    }
+
+    setFocusedZone('menu');
+
+    let direction: 'left' | 'right' | 'up' | 'down' | null = null;
+    if (key === 'ArrowRight') direction = 'right';
+    else if (key === 'ArrowLeft') direction = 'left';
+    else if (key === 'ArrowDown') direction = 'down';
+    else if (key === 'ArrowUp') direction = 'up';
+
+    if (direction) {
+      const nextIdx = getNextValidIndex(focusedItemIndex, direction, cols, total);
+      setFocusedItemIndex(nextIdx);
+    }
+  };
+
+  const highlightModalElement = (sectionsList: any[], secIdx: number, optIdx: number) => {
+    const modalEl = document.querySelector('.fixed.z-\\[100\\], .fixed.inset-0.z-\\[100\\], [role="dialog"]') as HTMLElement;
+    if (!modalEl) return;
+    
+    modalEl.querySelectorAll('.kb-focused').forEach(el => el.classList.remove('kb-focused'));
+    
+    const section = sectionsList[secIdx];
+    if (!section) return;
+    
+    let targetEl: HTMLElement | null = null;
+    if (section.type === 'options') {
+      const options = section.options || [];
+      targetEl = options[optIdx] || options[0] || null;
+    } else {
+      targetEl = section.element;
+    }
+    
+    if (targetEl) {
+      targetEl.classList.add('kb-focused');
+      targetEl.focus();
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
+  const handleModalKeyDown = (event: KeyboardEvent) => {
+    const modalEl = document.querySelector('.fixed.z-\\[100\\], .fixed.inset-0.z-\\[100\\], [role="dialog"]') as HTMLElement;
+    if (!modalEl) return;
+
+    const sections: {
+      type: 'options' | 'input' | 'button';
+      element: HTMLElement;
+      options?: HTMLElement[];
+    }[] = [];
+
+    const grids = Array.from(modalEl.querySelectorAll('.grid-cols-2, [class*="grid-cols-"]'));
+    const optionButtonsSet = new Set<HTMLElement>();
+
+    grids.forEach(grid => {
+      const buttons = Array.from(grid.querySelectorAll('button:not([disabled])')) as HTMLElement[];
+      if (buttons.length > 0) {
+        sections.push({
+          type: 'options',
+          element: grid as HTMLElement,
+          options: buttons
+        });
+        buttons.forEach(btn => optionButtonsSet.add(btn));
+      }
+    });
+
+    const inputs = Array.from(modalEl.querySelectorAll('textarea, input:not([type="hidden"])')) as HTMLElement[];
+    inputs.forEach(input => {
+      const rect = input.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        sections.push({
+          type: 'input',
+          element: input
+        });
+      }
+    });
+
+    const buttons = Array.from(modalEl.querySelectorAll('button:not([disabled])')) as HTMLElement[];
+    buttons.forEach(btn => {
+      const rect = btn.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && !optionButtonsSet.has(btn) && !btn.querySelector('svg')) {
+        sections.push({
+          type: 'button',
+          element: btn
+        });
+      }
+    });
+
+    if (sections.length === 0) return;
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Tab') {
+      event.preventDefault();
+      let nextSecIdx = modalSectionIndex;
+      if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+        nextSecIdx = (modalSectionIndex + 1) % sections.length;
+      } else {
+        nextSecIdx = (modalSectionIndex - 1 + sections.length) % sections.length;
+      }
+      setModalSectionIndex(nextSecIdx);
+      setModalOptionIndex(0);
+      highlightModalElement(sections, nextSecIdx, 0);
+    } 
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      const section = sections[modalSectionIndex];
+      if (section && section.type === 'options' && section.options) {
+        let nextOptIdx = modalOptionIndex;
+        if (event.key === 'ArrowRight') {
+          nextOptIdx = (modalOptionIndex + 1) % section.options.length;
+        } else {
+          nextOptIdx = (modalOptionIndex - 1 + section.options.length) % section.options.length;
+        }
+        setModalOptionIndex(nextOptIdx);
+        highlightModalElement(sections, modalSectionIndex, nextOptIdx);
+      }
+    } 
+    else if (event.key === 'Enter') {
+      event.preventDefault();
+      const section = sections[modalSectionIndex];
+      if (section) {
+        if (section.type === 'options' && section.options) {
+          const btn = section.options[modalOptionIndex];
+          if (btn) btn.click();
+        } else if (section.type === 'input') {
+          section.element.focus();
+        } else if (section.type === 'button') {
+          section.element.click();
+        }
+      }
+    } 
+    else if (event.key === 'Escape') {
+      event.preventDefault();
+      const closeBtn = modalEl.querySelector('header button, .absolute.top-2.right-2 button, button .w-5') as HTMLElement;
+      if (closeBtn) {
+        closeBtn.click();
+      } else {
+        setModifierModalData(null);
+        setDealModalData(null);
+      }
+    }
+  };
+
+  // Global keydown listeners routing
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (!isSafeToFire()) return;
+
+      if (modifierModalData || dealModalData) {
+        handleModalKeyDown(event);
+        return;
+      }
+
+      if (isHeldPanelOpen || isInProgressPanelOpen) {
+        const activePanelZone = isHeldPanelOpen ? 'panel-held' : 'panel-inprogress';
+        const ordersList = isHeldPanelOpen ? heldOrders : inProgressOrders;
+        
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (ordersList.length === 0) return;
+          
+          let nextIdx = focusedPanelOrderIndex !== null ? focusedPanelOrderIndex : -1;
+          if (event.key === 'ArrowDown') {
+            nextIdx = Math.min(ordersList.length - 1, nextIdx + 1);
+          } else {
+            nextIdx = Math.max(0, nextIdx - 1);
+          }
+          
+          setFocusedZone(activePanelZone);
+          setFocusedPanelOrderIndex(nextIdx);
+          
+          setTimeout(() => {
+            const items = document.querySelectorAll(`[data-kb-panel-order="${isHeldPanelOpen ? 'held' : 'inprogress'}"]`);
+            const targetItem = items[nextIdx] as HTMLElement;
+            if (targetItem) {
+              targetItem.focus();
+              targetItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }, 10);
+        } 
+        else if (event.key === 'Enter') {
+          event.preventDefault();
+          if (focusedPanelOrderIndex !== null && ordersList[focusedPanelOrderIndex]) {
+            const order = ordersList[focusedPanelOrderIndex];
+            retrieveOrder(order);
+            setFocusedZone('menu');
+            setFocusedItemIndex(0);
+          }
+        } 
+        else if (event.key === 'Escape') {
+          event.preventDefault();
+          setIsHeldPanelOpen(false);
+          setIsInProgressPanelOpen(false);
+          setFocusedZone('menu');
+          setFocusedItemIndex(0);
+        }
+        return;
+      }
+
+      if (focusedZone === 'cart' && focusedCartItemIndex !== null) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (cart.length === 0) return;
+          
+          let nextIdx = focusedCartItemIndex;
+          if (event.key === 'ArrowDown') {
+            nextIdx = Math.min(cart.length - 1, focusedCartItemIndex + 1);
+          } else {
+            nextIdx = Math.max(0, focusedCartItemIndex - 1);
+          }
+          setFocusedCartItemIndex(nextIdx);
+          setTimeout(() => {
+            const items = document.querySelectorAll('[data-kb-cart-item]');
+            const targetItem = items[nextIdx] as HTMLElement;
+            if (targetItem) {
+              targetItem.focus();
+              targetItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }, 10);
+          return;
+        }
+        else if (event.key === 'Enter') {
+          event.preventDefault();
+          const item = cart[focusedCartItemIndex];
+          if (item) {
+            handleEditModifiers(item);
+          }
+          return;
+        }
+        else if (event.key === 'Delete' || event.key === 'Backspace') {
+          event.preventDefault();
+          const item = cart[focusedCartItemIndex];
+          if (item) {
+            showConfirmModal({
+              title: 'Remove Item',
+              message: `Remove ${item.name} from cart?`,
+              confirmLabel: 'Remove',
+              cancelLabel: 'Cancel',
+              isDanger: true
+            }).then(confirmed => {
+              if (confirmed) {
+                removeFromCart(item.id);
+                if (focusedCartItemIndex >= cart.length - 1) {
+                  setFocusedCartItemIndex(Math.max(0, cart.length - 2));
+                }
+              }
+            });
+          }
+          return;
+        }
+        else if (event.key === 'Escape') {
+          event.preventDefault();
+          setFocusedZone('menu');
+          setFocusedItemIndex(0);
+          return;
+        }
+      }
+
+      if (event.key === ',' || event.key === '<') {
+        event.preventDefault();
+        if (cart.length === 0) {
+          toast("No items to send");
+          return;
+        }
+        sendToKitchen();
+        return;
+      }
+      if (event.key === '.' || event.key === '>') {
+        event.preventDefault();
+        if (cart.length === 0) {
+          toast("No items in order");
+          return;
+        }
+        handlePrintReceiptReceiptCheck();
+        return;
+      }
+      if (event.key === '/' || event.key === '?') {
+        event.preventDefault();
+        if (cart.length === 0) {
+          toast("No items to complete");
+          return;
+        }
+        completeOrder('completed');
+        return;
+      }
+      if (event.key === ';' || event.key === ':') {
+        event.preventDefault();
+        if (inProgressOrders.length === 0) {
+          toast("No in-progress orders");
+          return;
+        }
+        setIsInProgressPanelOpen(true);
+        setIsHeldPanelOpen(false);
+        setFocusedZone('panel-inprogress');
+        setFocusedPanelOrderIndex(0);
+        setTimeout(() => {
+          const item = document.querySelector('[data-kb-panel-order="inprogress"]') as HTMLElement;
+          if (item) {
+            item.focus();
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }, 100);
+        return;
+      }
+      if (event.key === "'" || event.key === '"') {
+        event.preventDefault();
+        if (heldOrders.length === 0) {
+          toast("No held orders");
+          return;
+        }
+        setIsHeldPanelOpen(true);
+        setIsInProgressPanelOpen(false);
+        setFocusedZone('panel-held');
+        setFocusedPanelOrderIndex(0);
+        setTimeout(() => {
+          const item = document.querySelector('[data-kb-panel-order="held"]') as HTMLElement;
+          if (item) {
+            item.focus();
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }, 100);
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        event.preventDefault();
+        handleMenuNavigation(event.key);
+        setTimeout(() => {
+          const targetItem = document.querySelector('.kb-focused') as HTMLElement;
+          if (targetItem) {
+            targetItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }, 10);
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        if (focusedZone === 'menu' && focusedItemIndex !== null) {
+          event.preventDefault();
+          const item = filteredItems[focusedItemIndex];
+          if (item && !isItemDisabled(focusedItemIndex)) {
+            handleAddToCart(item);
+          }
+        }
+        return;
+      }
+
+      if (event.key.length === 1 && event.key.match(/[a-zA-Z]/)) {
+        event.preventDefault();
+        handleLetterKeyPress(event.key);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [
+    shortcutsEnabled, focusedZone, focusedItemIndex, focusedCartItemIndex, focusedPanelOrderIndex,
+    lastLetterPressed, lastLetterPressIndex, activeCategory, filteredItems, cart, inProgressOrders, heldOrders,
+    modifierModalData, dealModalData, isHeldPanelOpen, isInProgressPanelOpen
+  ]);
 
   const handleKOTPrint = useReactToPrint({
     contentRef: kotRef,
@@ -241,6 +865,7 @@ export default function POS() {
           discountType: discountValue > 0 ? discountType : null,
           discountValue: discountValue > 0 ? parsedDiscountValue : 0,
           discountAmount,
+          status: 'in-progress'
         };
         await updateOrder(orderToSync);
       } else {
@@ -266,7 +891,6 @@ export default function POS() {
           discountAmount,
         };
         await addOrder(orderToSync);
-        setActiveOrder(orderToSync);
       }
 
       const orderId = orderToSync?.id;
@@ -275,25 +899,43 @@ export default function POS() {
         return;
       }
 
-      const kotNumber = (lastSnapshot?.kotNumber || 0) + 1;
+      let kotNumber: number;
+      if (activeOrder && !isFirstKOT) {
+        // Resend KOT (Update scenario)
+        const lastKOT = await db.kotSnapshots
+          .where('orderId').equals(orderId)
+          .toArray()
+          .then(arr => arr.sort((a, b) => a.kotNumber - b.kotNumber).pop());
+        kotNumber = (lastKOT?.kotNumber || 0) + 1;
+      } else {
+        // Send to Kitchen / KOT NUMBER GENERATION
+        const lastKOT = await db.kotSnapshots
+          .orderBy('kotNumber')
+          .last();
+        const lastNumber = lastKOT?.kotNumber || 0;
+        kotNumber = lastNumber + 1;
+      }
+
+      const prevSentAt = lastSnapshot ? lastSnapshot.sentAt : undefined;
+      setKotPrintPrevSentAt(prevSentAt);
+
       await addKotSnapshot({
         orderId: orderId,
         kotNumber,
         sentAt: Date.now(),
-        items: JSON.parse(JSON.stringify(cart))
+        items: JSON.parse(JSON.stringify(cart)),
+        notes: activeOrder?.notes || undefined
       });
 
       if (settings.autoPrintKOT) {
-        if (isFirstKOT) {
-          setKotPrintOrder(orderToSync);
-          setKotPrintNumber(kotNumber);
-          setIsPendingKOTPrint(true);
-        } else {
-          handleDeltaKOTPrint();
-        }
+        setKotPrintOrder(orderToSync);
+        setKotPrintNumber(kotNumber);
+        setIsFirstKOTPrint(isFirstKOT);
+        setIsPendingKOTPrint(true);
       }
 
-      toast.success(isFirstKOT ? 'Order sent to kitchen' : 'Kitchen update sent');
+      clearCart();
+      toast.success(`Order #${orderToSync.orderNumber} sent to kitchen and moved to In-Progress`);
     } catch (error: any) {
       console.error('Error sending to kitchen:', error);
       toast.error(error.message || 'An error occurred while sending order to the kitchen. State reset.');
@@ -311,7 +953,7 @@ export default function POS() {
 
       // Workflow Safety Guard:
       if (status === 'completed') {
-        if (!activeOrder || !lastSnapshot) {
+        if (requireKOT && (!activeOrder || !lastSnapshot)) {
           toast.error('Please send order to the kitchen first.');
           return;
         }
@@ -368,7 +1010,7 @@ export default function POS() {
       toast.error('Cannot print: Order incomplete.');
       return;
     }
-    if (cart.length > 0 && (!activeOrder || !lastSnapshot)) {
+    if (requireKOT && cart.length > 0 && (!activeOrder || !lastSnapshot)) {
       toast.error('Cannot print: Order incomplete.');
       return;
     }
@@ -384,6 +1026,7 @@ export default function POS() {
     const { unavailable } = storeRetrieveOrder(order, menuItems);
     setUnavailableItems(unavailable);
     setIsHeldPanelOpen(false);
+    setIsInProgressPanelOpen(false);
     setRetrievalConfirmData(null);
   };
 
@@ -409,10 +1052,36 @@ export default function POS() {
           <div>
             <h1 className="text-base font-bold text-text-primary uppercase tracking-tight">
               {settings.name || 'LUX BISTRO'} 
-              <span className="text-text-muted font-medium ml-2 text-xs tracking-wide">| Terminal 01</span>
+              <span className="text-text-muted font-medium ml-2 text-xs tracking-wide inline-flex items-center gap-1.5 align-middle">
+                <span>|</span>
+                <select
+                  value={activeCashierName || ''}
+                  onChange={(e) => setActiveCashierName(e.target.value || null)}
+                  className="bg-transparent text-text-muted font-semibold hover:text-text-primary px-1 py-0.5 rounded cursor-pointer outline-none border border-transparent focus:border-border-medium transition-all text-xs focus:bg-bg-surface-2 focus:ring-1 focus:ring-accent"
+                >
+                  <option value="" className="bg-bg-surface text-text-primary">Select Cashier</option>
+                  {cashiers.filter(c => c.isActive || c.name === activeCashierName).map(c => (
+                    <option key={c.id} value={c.name} className="bg-bg-surface text-text-primary font-medium">
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setIsInProgressPanelOpen(true)}
+              className="flex items-center gap-2 h-10 px-4 bg-bg-surface border-[1.5px] border-border-medium rounded-md text-xs font-semibold text-text-secondary hover:bg-bg-surface-2 hover:border-border-strong transition-all relative group shadow-sm active:scale-95"
+            >
+              <Flame className="w-4 h-4 text-amber-500" />
+              <span className="uppercase tracking-wide">In-Progress</span>
+              {inProgressOrders.length > 0 && (
+                <span className="absolute -top-2 -right-2 bg-amber-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-white shadow-md font-bold">
+                  {inProgressOrders.length}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setIsHeldPanelOpen(true)}
               className="flex items-center gap-2 h-10 px-4 bg-bg-surface border-[1.5px] border-border-medium rounded-md text-xs font-semibold text-text-secondary hover:bg-bg-surface-2 hover:border-border-strong transition-all relative group shadow-sm active:scale-95"
@@ -457,8 +1126,8 @@ export default function POS() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 pt-0 custom-scrollbar">
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 items-stretch">
-            {filteredItems.map(item => {
+          <div id="menu-grid" className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 items-stretch">
+            {filteredItems.map((item, index) => {
               const inCart = cart.find(i => i.menuItemId === item.id);
               const category = categories.find(c => String(c.id) === String(item.categoryId));
               const isStocked = category?.type === 'stocked';
@@ -476,7 +1145,8 @@ export default function POS() {
                   className={clsx(
                     "group relative flex flex-col bg-bg-surface border-[1.5px] rounded-lg p-4 transition-all duration-150 text-left",
                     isDisabled ? "cursor-not-allowed opacity-40" : "hover:bg-accent-light hover:border-accent-border hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] active:translate-y-0",
-                    inCart ? "border-accent ring-2 ring-accent/10 shadow-md" : "border-border-light shadow-sm"
+                    inCart ? "border-accent ring-2 ring-accent/10 shadow-md" : "border-border-light shadow-sm",
+                    index === focusedItemIndex && focusedZone === 'menu' && "kb-focused"
                   )}
                 >
                   {/* Stock Badge */}
@@ -492,8 +1162,13 @@ export default function POS() {
                   )}
 
                   <div className="flex flex-col h-full">
-                    <h3 className="font-semibold text-text-primary text-sm leading-[1.3] line-clamp-2 mb-2">
-                      {item.name}
+                    <h3 className="font-semibold text-text-primary text-sm leading-[1.3] line-clamp-2 mb-2 flex items-center gap-1.5 flex-wrap">
+                      {item.isDeal && (
+                        <span className="inline-flex items-center bg-accent/15 text-accent text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-wider border border-accent/25 select-none shrink-0 animate-pulse" title="Deal / Bundle">
+                          DEAL
+                        </span>
+                      )}
+                      <span>{item.name}</span>
                     </h3>
                     <p className="mt-auto font-bold text-accent text-base">
                       {settings.currency}{(item.price || 0).toFixed(2)}
@@ -591,7 +1266,7 @@ export default function POS() {
                <Clock className="w-4 h-4 text-warning" />
                <div className="flex-1">
                  <span className="text-[10px] font-bold uppercase tracking-tight text-warning block">
-                   Resuming Order #{activeOrder.orderNumber}
+                   Editing in-progress order #{activeOrder.orderNumber}
                  </span>
                </div>
                <button 
@@ -637,7 +1312,7 @@ export default function POS() {
             </div>
           ) : (
             <div className="divide-y divide-border-light border-t border-border-light">
-              {cart.map(item => {
+              {cart.map((item, idx) => {
                 const itemSnapshot = lastSnapshot?.items.find(si => si.menuItemId === item.menuItemId);
                 const isNew = !itemSnapshot;
                 const isIncreased = itemSnapshot && item.quantity > itemSnapshot.quantity;
@@ -645,10 +1320,24 @@ export default function POS() {
                 const isActive = (isNew || isIncreased);
 
                 return (
-                  <div key={item.id} className={clsx(
-                    "min-h-[56px] px-4 py-3 transition-all relative flex flex-col gap-2",
-                    isActive ? "bg-accent/[0.03]" : "bg-bg-surface"
-                  )}>
+                  <div 
+                    key={item.id} 
+                    tabIndex={0}
+                    data-kb-cart-item="true"
+                    onFocus={() => {
+                      setFocusedZone('cart');
+                      setFocusedCartItemIndex(idx);
+                    }}
+                    onClick={() => {
+                      setFocusedZone('cart');
+                      setFocusedCartItemIndex(idx);
+                    }}
+                    className={clsx(
+                      "min-h-[56px] px-4 py-3 transition-all relative flex flex-col gap-2 focus:outline-none",
+                      isActive ? "bg-accent/[0.03]" : "bg-bg-surface",
+                      focusedZone === 'cart' && focusedCartItemIndex === idx && "kb-focused"
+                    )}
+                  >
                     {isActive && <div className="absolute top-0 left-0 w-1 h-full bg-warning"></div>}
                     {isSent && !isNew && !isIncreased && <div className="absolute top-0 left-0 w-1 h-full bg-success/40"></div>}
                     
@@ -666,12 +1355,38 @@ export default function POS() {
                       </div>
 
                       <div className="flex flex-col">
-                        {(item.modifiers || []).map((m: any, mIdx: number) => (
+                        {!item.isDeal && (item.modifiers || []).map((m: any, mIdx: number) => (
                           <span key={mIdx} className="text-[12px] text-text-muted leading-relaxed">
                             + {m.label}
                           </span>
                         ))}
                       </div>
+
+                      {item.isDeal && item.dealComponents && (
+                        <div className="mt-2 pl-3 border-l-2 border-accent/30 flex flex-col gap-2">
+                          {item.dealComponents.map((comp, cIdx) => (
+                            <div key={cIdx} className="flex flex-col gap-0.5">
+                              <span className="text-[12px] font-bold text-accent leading-tight">
+                                {comp.componentName} <span className="text-text-muted font-normal text-[10px]">(unit {comp.unitIndex})</span>
+                              </span>
+                              {comp.modifiers && comp.modifiers.length > 0 && (
+                                <div className="flex flex-col pl-1.5 border-l border-dashed border-border-light">
+                                  {comp.modifiers.map((mod: any, mIdx: number) => (
+                                    <span key={mIdx} className="text-[11px] text-text-muted leading-relaxed">
+                                      + {mod.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {comp.notes && (
+                                <span className="text-[11px] italic text-text-placeholder leading-relaxed pl-1.5">
+                                  "{comp.notes}"
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between mt-1">
@@ -694,13 +1409,17 @@ export default function POS() {
                       </div>
                       
                       <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => handleEditModifiers(item)}
-                          className="text-[10px] font-bold text-accent uppercase tracking-widest hover:text-accent-strong transition-colors"
-                        >
-                          Customize
-                        </button>
-                        <div className="w-px h-3 bg-border-light"></div>
+                        {!item.isDeal && (
+                          <>
+                            <button 
+                              onClick={() => handleEditModifiers(item)}
+                              className="text-[10px] font-bold text-accent uppercase tracking-widest hover:text-accent-strong transition-colors"
+                            >
+                              Customize
+                            </button>
+                            <div className="w-px h-3 bg-border-light"></div>
+                          </>
+                        )}
                         <button 
                           type="button"
                           onClick={(e) => {
@@ -715,20 +1434,22 @@ export default function POS() {
                       </div>
                     </div>
 
-                    <div className="mt-1">
-                      <textarea 
-                        rows={1}
-                        placeholder="Add preparation notes..."
-                        value={item.notes || ''}
-                        onChange={(e) => updateItemNote(item.id, e.target.value)}
-                        className="w-full bg-bg-surface-2 border border-border-light rounded-md px-3 py-1.5 text-[11px] text-text-secondary placeholder:text-text-placeholder focus:outline-none focus:border-accent transition-all resize-none overflow-hidden min-h-[32px] max-h-[48px]"
-                        onInput={(e) => {
-                          const target = e.target as HTMLTextAreaElement;
-                          target.style.height = 'auto';
-                          target.style.height = `${Math.min(target.scrollHeight, 48)}px`;
-                        }}
-                      />
-                    </div>
+                    {!item.isDeal && (
+                      <div className="mt-1">
+                        <textarea 
+                          rows={1}
+                          placeholder="Add preparation notes..."
+                          value={item.notes || ''}
+                          onChange={(e) => updateItemNote(item.id, e.target.value)}
+                          className="w-full bg-bg-surface-2 border border-border-light rounded-md px-3 py-1.5 text-[11px] text-text-secondary placeholder:text-text-placeholder focus:outline-none focus:border-accent transition-all resize-none overflow-hidden min-h-[32px] max-h-[48px]"
+                          onInput={(e) => {
+                            const target = e.target as HTMLTextAreaElement;
+                            target.style.height = 'auto';
+                            target.style.height = `${Math.min(target.scrollHeight, 48)}px`;
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -809,7 +1530,7 @@ export default function POS() {
             {orderType === OrderType.DELIVERY && settings.deliveryChargeEnabled && (
               <div className="flex justify-between items-center text-[11px] font-medium text-text-secondary h-8">
                 <span className="uppercase tracking-tight flex items-center gap-1 opacity-70">
-                  <span>🛵</span>
+                 
                   <span>{settings.deliveryChargeLabel || 'Delivery'}</span>
                 </span>
                 <div className="flex items-center gap-1">
@@ -858,7 +1579,7 @@ export default function POS() {
                 )}
               >
                 <Send className="w-4 h-4" />
-                {activeOrder ? 'Resend' : 'Kitchen'}
+                {activeOrder?.status === 'in-progress' ? 'Resend KOT' : activeOrder ? 'Resend' : 'Kitchen'}
                 {lastSnapshot && (
                   <span className="absolute -top-1.5 -right-1.5 bg-accent text-white text-[9px] px-1.5 py-0.5 rounded-full border border-white font-black shadow-md">
                      {lastSnapshot.kotNumber}
@@ -867,7 +1588,13 @@ export default function POS() {
               </button>
               <button
                 onClick={() => handlePrintReceiptReceiptCheck()}
-                className="h-[44px] bg-bg-surface-2 border border-border-light hover:bg-bg-app rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold uppercase text-text-primary tracking-widest shadow-sm transition-colors"
+                disabled={
+                  cart.length > 0 
+                    ? (requireKOT ? (!activeOrder || !lastSnapshot) : false)
+                    : !lastOrder
+                }
+                title={requireKOT && cart.length > 0 && (!activeOrder || !lastSnapshot) ? "Send to Kitchen first" : undefined}
+                className="h-[44px] bg-bg-surface-2 border border-border-light hover:bg-bg-app rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold uppercase text-text-primary tracking-widest shadow-sm transition-colors disabled:opacity-40"
               >
                 <Printer className="w-4 h-4" />
                 Bill
@@ -883,7 +1610,8 @@ export default function POS() {
               </button>
               <button
                 onClick={() => completeOrder('completed')}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || (requireKOT ? (!activeOrder || !lastSnapshot) : false)}
+                title={requireKOT && cart.length > 0 && (!activeOrder || !lastSnapshot) ? "Send to Kitchen first" : undefined}
                 className="h-[44px] bg-success hover:bg-success/90 text-white rounded-lg font-bold uppercase text-[10px] tracking-widest disabled:opacity-40 shadow-md transition-all"
               >
                 Complete
@@ -929,14 +1657,14 @@ export default function POS() {
           )}
         </div>
         <div ref={deltaKotRef}>
-          {activeOrder && deltas && (
+          {kotPrintOrder && !isFirstKOTPrint && (
             <DeltaKitchenTicket
-               order={activeOrder}
+               order={kotPrintOrder}
                settings={settings}
-               kotNumber={lastSnapshot ? lastSnapshot.kotNumber + 1 : 1}
-               totalKots={lastSnapshot ? lastSnapshot.kotNumber + 1 : 1}
-               lastSentAt={lastSnapshot?.sentAt}
-               deltas={deltas}
+               kotNumber={kotPrintNumber}
+               totalKots={kotPrintNumber}
+               lastSentAt={kotPrintPrevSentAt}
+               deltas={null}
             />
           )}
         </div>
@@ -975,10 +1703,22 @@ export default function POS() {
                   <p className="font-bold text-[10px] uppercase tracking-[0.2em] opacity-40">Queue is Clear</p>
                 </div>
               ) : (
-                heldOrders.map(order => {
+                heldOrders.map((order, idx) => {
                   const isOverdue = isAfter(subHours(new Date(), 2), new Date(order.createdAt));
                   return (
-                    <div key={order.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 space-y-5 hover:border-blue-200 transition-all group shadow-sm hover:shadow-md">
+                    <div 
+                      key={order.id} 
+                      tabIndex={0}
+                      data-kb-panel-order="held"
+                      onFocus={() => {
+                        setFocusedZone('panel-held');
+                        setFocusedPanelOrderIndex(idx);
+                      }}
+                      className={clsx(
+                        "bg-white border border-slate-100 rounded-[2rem] p-6 space-y-5 hover:border-blue-100 transition-all group shadow-sm hover:shadow-md focus:outline-none",
+                        focusedZone === 'panel-held' && focusedPanelOrderIndex === idx && "kb-focused"
+                      )}
+                    >
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1037,6 +1777,120 @@ export default function POS() {
         </>
       )}
 
+      {/* In-Progress Orders Slide-over */}
+      {isInProgressPanelOpen && (
+        <>
+          <div 
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] animate-fade-in"
+            onClick={() => setIsInProgressPanelOpen(false)}
+          />
+          <div className="fixed top-0 right-0 h-full w-[400px] bg-white shadow-2xl z-[70] animate-in slide-in-from-right duration-300 border-l border-slate-100 flex flex-col">
+            <header className="p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-3">
+                <Flame className="w-5 h-5 text-amber-500 animate-pulse" />
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wider leading-tight">In-Progress Orders</h2>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Orders sent to kitchen</p>
+                </div>
+              </div>
+              <button onClick={() => setIsInProgressPanelOpen(false)} className="text-slate-300 hover:text-slate-900 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+              {inProgressOrders.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-300 space-y-4 py-20">
+                  <Flame className="w-16 h-16 opacity-10" />
+                  <p className="font-bold text-[10px] uppercase tracking-[0.2em] opacity-40">No orders in progress</p>
+                </div>
+              ) : (
+                inProgressOrders.map((order, idx) => {
+                  const orderSnapshots = kotSnapshots.filter(s => s.orderId === order.id).sort((a, b) => b.sentAt - a.sentAt);
+                  const latestSnapshot = orderSnapshots[0];
+                  const sentAt = latestSnapshot ? latestSnapshot.sentAt : order.createdAt;
+                  const kotNumber = latestSnapshot ? latestSnapshot.kotNumber : 1;
+                  const isOverdue = Date.now() - sentAt > 30 * 60 * 1000; // 30 mins
+
+                  const itemsCount = order.items.reduce((acc, i) => acc + i.quantity, 0);
+                  const itemsSummary = `${itemsCount} item${itemsCount !== 1 ? 's' : ''} — ` + order.items.map(i => `${i.name} ×${i.quantity}`).join(', ');
+
+                  return (
+                    <div 
+                      key={order.id} 
+                      tabIndex={0}
+                      data-kb-panel-order="inprogress"
+                      onFocus={() => {
+                        setFocusedZone('panel-inprogress');
+                        setFocusedPanelOrderIndex(idx);
+                      }}
+                      className={clsx(
+                        "bg-white border border-slate-100 rounded-[2rem] p-6 space-y-5 hover:border-amber-100 transition-all group shadow-sm hover:shadow-md focus:outline-none",
+                        focusedZone === 'panel-inprogress' && focusedPanelOrderIndex === idx && "kb-focused"
+                      )}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                             <h4 className="text-sm font-black text-slate-900 uppercase font-mono tracking-tighter">#{order.orderNumber}</h4>
+                             {isOverdue && (
+                               <span className="bg-rose-50 text-rose-500 text-[8px] font-black px-2 py-0.5 rounded-full border border-rose-100 uppercase tracking-widest animate-pulse">30+ min</span>
+                             )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-tight">
+                            {order.customerName || 'Guest'} • {order.type === OrderType.DINE_IN && order.tableNumber ? `Table ${order.tableNumber}` : order.type}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-black text-slate-900 font-mono">{settings.currency}{(order.total || 0).toFixed(2)}</div>
+                          <div className="text-[9px] text-amber-600 font-black uppercase tracking-tight mt-1">
+                            {formatDistanceToNow(sentAt)} ago
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100/50">
+                        <div className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 border-b border-slate-200/50 pb-1.5 flex justify-between">
+                          <span>Items Matrix</span>
+                          <span>KOT #{kotNumber}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 line-clamp-2 italic font-medium leading-relaxed">
+                          {itemsSummary}
+                        </p>
+                      </div>
+
+                      <div className="flex gap-2 pt-1">
+                        <button 
+                          onClick={() => retrieveOrder(order)}
+                          className="flex-grow py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] shadow-lg shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+                        >
+                          Retrieve to Checkout
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCancellingOrder(order);
+                            setCancellationReasonText('');
+                          }}
+                          className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] active:scale-95 transition-all cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-6 border-t border-slate-100 text-center shrink-0">
+              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                To delete an in-progress order, go to Records page.
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Retrieval Confirmation Modal */}
       {retrievalConfirmData && (
         <div className="fixed inset-0 bg-white/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-fade-in">
@@ -1047,7 +1901,10 @@ export default function POS() {
               <div className="space-y-3">
                 <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Active Buffer</h2>
                 <p className="text-slate-400 text-sm leading-relaxed font-medium">
-                  Current cart contains uncommitted items. Preserve state by holding or discard to restore <span className="text-slate-900 font-mono font-bold">#{retrievalConfirmData.orderNumber}</span>.
+                  {retrievalConfirmData.status === 'in-progress' 
+                    ? <>Your current cart has items. Hold current cart or discard it to retrieve this order <span className="text-slate-900 font-mono font-bold">#{retrievalConfirmData.orderNumber}</span>.</>
+                    : <>Current cart contains uncommitted items. Preserve state by holding or discard to restore <span className="text-slate-900 font-mono font-bold">#{retrievalConfirmData.orderNumber}</span>.</>
+                  }
                 </p>
               </div>
               <div className="grid grid-cols-1 gap-3 pt-4">
@@ -1058,7 +1915,7 @@ export default function POS() {
                   }}
                   className="w-full py-4 bg-slate-900 border border-slate-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-slate-900/10 transition-all active:scale-[0.98]"
                 >
-                  Preserve Current Cart
+                  {retrievalConfirmData.status === 'in-progress' ? 'Hold Current Cart' : 'Preserve Current Cart'}
                 </button>
                 <button 
                   onClick={() => {
@@ -1067,7 +1924,7 @@ export default function POS() {
                   }}
                   className="w-full py-4 bg-white hover:bg-slate-50 text-slate-900 border border-slate-100 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-[0.98] shadow-sm"
                 >
-                  Discard Buffer
+                  {retrievalConfirmData.status === 'in-progress' ? 'Discard Cart' : 'Discard Buffer'}
                 </button>
                 <button 
                   onClick={() => setRetrievalConfirmData(null)}
@@ -1099,6 +1956,98 @@ export default function POS() {
             }}
           />
         </AnimatePresence>
+      )}
+
+      {/* Deal Modal */}
+      {dealModalData && (
+        <AnimatePresence>
+          <DealModal
+            dealItem={dealModalData.dealItem}
+            components={dealModalData.components}
+            onClose={() => setDealModalData(null)}
+            onConfirm={(finalComponents) => {
+              addDealToCart(dealModalData.dealItem, finalComponents as any);
+              setDealModalData(null);
+              toast.success(`Bundle "${dealModalData.dealItem.name}" added to cart`);
+            }}
+          />
+        </AnimatePresence>
+      )}
+
+      {/* Cancellation Modal */}
+      {cancellingOrder && (
+        <div className="fixed inset-0 bg-white/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-fade-in text-black">
+          <div className="bg-white border border-slate-100 rounded-[3rem] p-12 max-w-md w-full shadow-2xl space-y-8 animate-in zoom-in-95 duration-200">
+            <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto border border-red-100">
+              <AlertCircle className="w-10 h-10 text-red-500" />
+            </div>
+            
+            <div className="space-y-3 text-center">
+              <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">
+                Cancel Order #{cancellingOrder.orderNumber}?
+              </h2>
+              <p className="text-slate-500 text-sm font-medium">
+                Enter reason for cancellation:
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <textarea
+                placeholder="e.g. Customer changed mind, Food waste - wrong order, Equipment failure..."
+                required
+                className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-2xl p-4 text-xs focus:outline-none min-h-[100px] resize-none leading-relaxed transition-all font-medium text-slate-800"
+                value={cancellationReasonText}
+                onChange={(e) => setCancellationReasonText(e.target.value)}
+              />
+
+              <div className="space-y-1">
+                <span className="text-[9px] font-extrabold uppercase tracking-widest text-red-600">Quick Examples:</span>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {["Customer changed mind", "Food waste - wrong order", "Equipment failure"].map((ex) => (
+                    <button
+                      key={ex}
+                      type="button"
+                      onClick={() => setCancellationReasonText(ex)}
+                      className="text-[9px] font-bold uppercase tracking-tight bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1.5 rounded-full transition-all cursor-pointer"
+                    >
+                      {ex}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button 
+                type="button"
+                onClick={() => {
+                  setCancellingOrder(null);
+                  setCancellationReasonText('');
+                }}
+                className="w-full py-4 bg-white hover:bg-slate-50 text-slate-900 border border-slate-100 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-[0.98] cursor-pointer"
+              >
+                Back
+              </button>
+              <button 
+                type="button"
+                disabled={!cancellationReasonText.trim()}
+                onClick={async () => {
+                  const val = cancellationReasonText.trim();
+                  if (!val) {
+                    toast.error("Cancellation reason is required");
+                    return;
+                  }
+                  await cancelOrder(cancellingOrder.id, val, activeCashierName);
+                  setCancellingOrder(null);
+                  setCancellationReasonText('');
+                }}
+                className="w-full py-4 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-red-900/10 transition-all active:scale-[0.98] cursor-pointer"
+              >
+                Confirm Cancellation
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

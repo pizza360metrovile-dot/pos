@@ -17,7 +17,12 @@ import {
   KotSnapshot,
   ModifierGroup,
   ModifierOption,
-  OrderItemModifier
+  OrderItemModifier,
+  DealItem,
+  DealOrderComponent,
+  Expense,
+  ExpenseCategory,
+  Cashier
 } from '../types';
 
 export class RMSDatabase extends Dexie {
@@ -34,6 +39,11 @@ export class RMSDatabase extends Dexie {
   modifierGroups!: Table<ModifierGroup>;
   modifierOptions!: Table<ModifierOption>;
   orderItemModifiers!: Table<OrderItemModifier>;
+  dealItems!: Table<DealItem>;
+  dealOrderComponents!: Table<DealOrderComponent>;
+  expenses!: Table<Expense>;
+  expenseCategories!: Table<ExpenseCategory>;
+  cashiers!: Table<Cashier>;
   users!: Table<{ id: string; email: string; password: string }>;
   used_keys!: Table<{ signature: string; timestamp: string }>;
   sync_queue!: Table<{ id?: number; signature: string; timestamp: string; synced: number }>;
@@ -164,7 +174,104 @@ export class RMSDatabase extends Dexie {
         }
       });
     });
+
+    this.version(18).stores({
+      dealItems: '++id, dealMenuItemId, componentMenuItemId'
+    }).upgrade(tx => {
+      return tx.table('menuItems').toCollection().modify(item => {
+        if (item.isDeal === undefined) item.isDeal = false;
+      });
+    });
+
+    this.version(19).stores({
+      dealOrderComponents: '++id, orderItemId, componentMenuItemId'
+    });
+
+    this.version(20).stores({
+      expenses: '++id, title, categoryId, date, createdAt',
+      expenseCategories: '++id, name'
+    });
+
+    this.version(21).stores({
+      cashiers: '++id, name, isActive'
+    });
+
+    this.version(22).stores({}).upgrade(tx => {
+      return tx.table('orders').toCollection().modify(order => {
+        if (order.isCancelled === undefined) order.isCancelled = false;
+        if (order.cancelledAt === undefined) order.cancelledAt = null;
+        if (order.cancellationReason === undefined) order.cancellationReason = null;
+        if (order.cancelledBy === undefined) order.cancelledBy = null;
+      });
+    });
+
+    this.version(23).stores({
+      kotSnapshots: '++id, orderId, kotNumber'
+    });
   }
 }
 
 export const db = new RMSDatabase();
+
+// List of tables we want to sync between Dexie and Firestore
+const syncCollections = [
+  'orders',
+  'orderItems',
+  'orderItemModifiers',
+  'dealOrderComponents',
+  'kotSnapshots',
+  'menuItems',
+  'categories',
+  'modifierGroups',
+  'modifierOptions',
+  'dealItems',
+  'ingredients',
+  'recipes',
+  'recipeItems',
+  'stockLog',
+  'settings',
+  'expenses',
+  'expenseCategories',
+  'cashiers'
+];
+
+syncCollections.forEach(tableName => {
+  const table = (db as any)[tableName];
+  if (!table) return;
+
+  table.hook('creating', function(this: any, primKey: any, obj: any, transaction: any) {
+    if (transaction?.fromFirestore) return;
+    this.onsuccess = function(actualKey: any) {
+      import('../utils/syncToFirestore').then(({ syncDoc }) => {
+        const dataToSync = { ...obj };
+        if (dataToSync.id === undefined && actualKey !== undefined) {
+          dataToSync.id = actualKey;
+        }
+        syncDoc(tableName, actualKey, dataToSync);
+      }).catch(err => console.warn('Failed to dynamically import syncDoc on creating hook:', err));
+    };
+  });
+
+  table.hook('updating', function(this: any, mods: any, primKey: any, obj: any, transaction: any) {
+    if (transaction?.fromFirestore) return;
+    this.onsuccess = function(updatedObj: any) {
+      import('../utils/syncToFirestore').then(({ syncDoc }) => {
+        const dataToSync = { ...updatedObj };
+        if (dataToSync.id === undefined && primKey !== undefined) {
+          dataToSync.id = primKey;
+        }
+        syncDoc(tableName, primKey, dataToSync);
+      }).catch(err => console.warn('Failed to dynamically import syncDoc on updating hook:', err));
+    };
+  });
+
+  table.hook('deleting', function(this: any, primKey: any, obj: any, transaction: any) {
+    if (transaction?.fromFirestore) return;
+    this.onsuccess = function() {
+      import('../utils/syncToFirestore').then(({ deleteDoc }) => {
+        deleteDoc(tableName, primKey);
+      }).catch(err => console.warn('Failed to dynamically import deleteDoc on deleting hook:', err));
+    };
+  });
+});
+

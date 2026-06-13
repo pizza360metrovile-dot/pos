@@ -219,3 +219,28 @@
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+.kb-focused {
+  outline: 3px solid #F97316 !important;
+  outline-offset: 2px !important;
+  border-radius: inherit;
+}
+
+/* Remove default focus outlines 
+from elements that will get kb-focused */
+input.kb-focused:focus,
+textarea.kb-focused:focus,
+button.kb-focused:focus,
+[type="radio"].kb-focused:focus,
+[type="checkbox"].kb-focused:focus {
+  outline: 3px solid #F97316 !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+
+/* Ensure parent doesn't hide outline */
+.modifier-modal-content,
+.modifier-option-row,
+.modifier-group {
+  overflow: visible !important;
+}

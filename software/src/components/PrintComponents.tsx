@@ -10,79 +10,163 @@ import { Order, RestaurantSettings } from '../types';
 export const KitchenTicket = React.forwardRef<HTMLDivElement, { order: Order; settings: RestaurantSettings; kotNumber?: number }>(
   ({ order, settings, kotNumber = 1 }, ref) => {
     return (
-      <div ref={ref} className="p-8 text-black bg-white font-mono text-sm max-w-[300px] mx-auto print:block">
-        <div className="text-center mb-4">
-          <h1 className="text-2xl font-black uppercase tracking-tighter">Kitchen Order</h1>
-          <p className="text-xs font-bold uppercase mt-1">KOT #{kotNumber}</p>
-          <p className="text-[10px] font-bold uppercase mt-1 opacity-70">{settings.name}</p>
-          <div className="border-b-2 border-black my-2"></div>
+      <div ref={ref} className="p-4 text-black bg-white max-w-[300px] mx-auto print:block kot-print-container">
+        <style>{`
+          @media print {
+            @page { 
+              size: 80mm auto; 
+              margin: 2mm 2mm;
+            }
+            body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+            }
+            .kot-print-container {
+              width: 74mm !important;
+              max-width: 74mm !important;
+              font-family: Arial, Helvetica, sans-serif !important;
+              font-size: 14px !important;
+              font-weight: bold !important;
+              line-height: 1.4 !important;
+              background: #ffffff !important;
+              color: #000000 !important;
+              padding: 0mm 2mm !important;
+              margin: 0 auto !important;
+            }
+            .kot-print-container * {
+              color: #000000 !important;
+              font-family: Arial, Helvetica, sans-serif !important;
+              font-weight: bold !important;
+              background: transparent !important;
+            }
+            .kot-text-heavy {
+              font-size: 17px !important;
+              font-weight: 900 !important;
+            }
+            .kot-text-normal {
+              font-size: 14px !important;
+              font-weight: bold !important;
+            }
+          }
+        `}</style>
+        
+        {/* HEADER SECTION */}
+        <div style={{ textAlign: 'center', width: '100%' }}>
+          <div className="kot-text-heavy" style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '2px' }}>KOT #{kotNumber}</div>
+          <div className="kot-text-normal" style={{ fontSize: '13px', marginTop: '1px' }}>{settings.name}</div>
+          <div style={{ fontSize: '14px', margin: '4px 0', fontWeight: 'bold' }}>────────────────────────────────</div>
         </div>
 
-        <div className="space-y-1 text-sm font-bold">
-          <div className="flex justify-between">
-            <span>Order #:</span>
-            <span>{order.orderNumber}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span>Date: {format(order.createdAt, 'dd/MM/yy')}</span>
-            <span>Time: {format(order.createdAt, 'HH:mm')}</span>
-          </div>
-          
-          {settings.showOrderTypeOnKOT && (
-            <div className="flex justify-between border-t border-black border-dotted pt-1 mt-1">
-              <span>Type:</span>
-              <span className="uppercase">{order.type}</span>
-            </div>
-          )}
+        {/* METADATA BLOCK */}
+        <table style={{ width: '100%', fontSize: '14px', borderCollapse: 'collapse', fontWeight: 'bold' }}>
+          <tbody>
+            <tr>
+              <td style={{ width: '40%', padding: '2px 0', fontWeight: 'bold' }}>Order #:</td>
+              <td style={{ width: '60%', textAlign: 'right', fontWeight: 'bold' }}>{order.orderNumber}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Date:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'dd/MM/yyyy')}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Time:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'HH:mm:ss')}</td>
+            </tr>
+            {settings.showOrderTypeOnKOT && (
+              <tr>
+                <td style={{ padding: '4px 0 2px 0', borderTop: '1px dashed #000000', fontWeight: 'bold' }}>Type:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '4px 0 2px 0', borderTop: '1px dashed #000000', textTransform: 'uppercase' }}>{order.type}</td>
+              </tr>
+            )}
+            {order.tableNumber && (
+              <tr>
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Table:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold', fontSize: '16px' }}>#{order.tableNumber}</td>
+              </tr>
+            )}
+            {settings.showCustomerNameOnKOT && order.customerName && (
+              <tr>
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Customer:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{order.customerName}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
 
-          {order.tableNumber && (
-            <div className="flex justify-between">
-              <span>Table:</span>
-              <span className="text-lg">#{order.tableNumber}</span>
-            </div>
-          )}
+        <div style={{ fontSize: '14px', margin: '6px 0', fontWeight: 'bold' }}>================================</div>
 
-          {settings.showCustomerNameOnKOT && order.customerName && (
-            <div className="flex justify-between">
-              <span>Customer:</span>
-              <span className="truncate max-w-[150px]">{order.customerName}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="border-b-2 border-black my-3"></div>
-
-        <div className="space-y-4">
+        {/* KOT ITEMS LIST */}
+        <div style={{ width: '100%' }}>
           {order.items.map((item, idx) => (
-             <div key={idx} className="flex flex-col">
-                <div className="flex justify-between items-start">
-                   <div className="flex gap-3 items-center">
-                      <span className="text-xl font-black">{item.quantity}</span>
-                      <span className="text-lg font-bold uppercase">{item.name}</span>
-                   </div>
-                </div>
-                {item.notes && (
-                  <p className="text-xs italic font-semibold ml-8 mt-1 border-l-2 border-black pl-2">
-                    * {item.notes}
-                  </p>
-                )}
-                {(item.modifiers || []).length > 0 && (
-                  <div className="ml-8 mt-1 border-l-2 border-black pl-2 space-y-0.5">
-                    {item.modifiers?.map((m: any, mIdx: number) => (
-                      <p key={mIdx} className="text-xs font-bold uppercase">+ {m.label}</p>
-                    ))}
-                  </div>
-                )}
+            <div key={idx} style={{ width: '100%' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
+                <tbody>
+                  <tr>
+                    <td style={{ width: '20%', fontWeight: '900', fontSize: '18px', verticalAlign: 'top' }}>{item.quantity}x</td>
+                    <td style={{ width: '80%', fontWeight: '900', fontSize: '16px', textTransform: 'uppercase', verticalAlign: 'top', paddingLeft: '4px' }}>{item.name}</td>
+                  </tr>
+                </tbody>
+              </table>
 
-             </div>
+              {/* Item Level Notes */}
+              {item.notes && (
+                <div style={{ paddingLeft: '28px', fontSize: '13px', fontWeight: 'bold', marginTop: '2px' }}>
+                  * NOTE: {item.notes}
+                </div>
+              )}
+
+              {/* Modifiers List */}
+              {(item.modifiers || []).length > 0 && (
+                <div style={{ paddingLeft: '28px', marginTop: '2px' }}>
+                  {item.modifiers?.map((m: any, mIdx: number) => (
+                    <div key={mIdx} style={{ fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                      → {m.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Deal Sub-Components Breakdown */}
+              {item.isDeal && item.dealComponents && (
+                <div style={{ paddingLeft: '28px', marginTop: '4px', borderLeft: '2px dashed #000000', marginLeft: '6px' }}>
+                  {item.dealComponents.map((comp, cIdx) => (
+                    <div key={cIdx} style={{ marginBottom: '4px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>• {comp.componentName}</div>
+                      {comp.modifiers && comp.modifiers.length > 0 && (
+                        <div style={{ paddingLeft: '12px' }}>
+                          {comp.modifiers.map((m: any, mIdx: number) => (
+                            <div key={mIdx} style={{ fontSize: '12px', fontWeight: 'bold' }}>— {m.label}</div>
+                          ))}
+                        </div>
+                      )}
+                      {comp.notes && (
+                        <div style={{ paddingLeft: '12px', fontSize: '12px', fontStyle: 'italic', fontWeight: 'bold' }}>
+                          Note: {comp.notes}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Strict Separator Block Requirement */}
+              {idx < order.items.length - 1 && (
+                <div style={{ fontSize: '14px', margin: '6px 0', textAlign: 'center', fontWeight: 'bold', width: '100%', clear: 'both' }}>
+                  --------------------------------
+                </div>
+              )}
+            </div>
           ))}
         </div>
 
-        <div className="border-b-2 border-black my-4"></div>
+        <div style={{ fontSize: '14px', margin: '6px 0', fontWeight: 'bold' }}>================================</div>
         
-        <div className="text-center font-bold">
-          <p className="text-sm uppercase">{order.items.reduce((acc, i) => acc + i.quantity, 0)} Items Total</p>
-          <p className="text-xs uppercase mt-4 tracking-widest">— KOT End —</p>
+        {/* FOOTER TOTALS */}
+        <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px' }}>
+          <div style={{ fontSize: '15px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+            TOTAL ITEMS: {order.items.reduce((acc, i) => acc + i.quantity, 0)}
+          </div>
         </div>
       </div>
     );
@@ -102,150 +186,126 @@ export const DeltaKitchenTicket = React.forwardRef<HTMLDivElement, {
   kotNumber: number;
   totalKots: number;
   lastSentAt?: number;
-  deltas: DeltaSections;
+  deltas?: DeltaSections | null;
 }>(({ order, settings, kotNumber, totalKots, lastSentAt, deltas }, ref) => {
-  const isFullCancellation = deltas.cancelled.length > 0 && 
-    deltas.added.length === 0 && 
-    deltas.increased.length === 0 && 
-    deltas.noteChanged.length === 0 && 
-    order.items.length === 0;
-
   return (
-    <div ref={ref} className="p-8 text-black bg-white font-mono text-sm max-w-[300px] mx-auto print:block">
-      <div className="text-center mb-4">
-        <h1 className="text-xl font-black uppercase tracking-tighter">
-          {isFullCancellation ? '*** ORDER CANCELLED ***' : '*** KITCHEN UPDATE ***'}
-        </h1>
-        <p className="text-[10px] font-bold uppercase mt-1 opacity-70">{settings.name}</p>
-        <div className="border-b-2 border-black my-2"></div>
-      </div>
-
-      <div className="space-y-1 text-sm font-bold">
-        <div className="flex justify-between">
-          <span>Order #:</span>
-          <span>{order.orderNumber}</span>
+    <div ref={ref} className="p-4 text-black bg-white max-w-[300px] mx-auto print:block kot-print-container">
+      <style>{`
+        @media print {
+          @page { 
+            size: 80mm auto; 
+            margin: 2mm 2mm;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+          }
+          .kot-print-container {
+            width: 74mm !important;
+            max-width: 74mm !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 14px !important;
+            font-weight: bold !important;
+            line-height: 1.4 !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            padding: 0mm 2mm !important;
+            margin: 0 auto !important;
+          }
+          .kot-print-container * {
+            color: #000000 !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-weight: bold !important;
+            background: transparent !important;
+          }
+        `}</style>
+        <div style={{ textAlign: 'center', width: '100%' }}>
+          <div style={{ fontSize: '16px', fontWeight: '900' }}>*** UPDATED ORDER ***</div>
+          <div style={{ fontSize: '13px', marginTop: '2px', fontWeight: 'bold' }}>{settings.name}</div>
+          <div style={{ fontSize: '14px', margin: '4px 0', fontWeight: 'bold' }}>────────────────────────────────</div>
         </div>
+
+        <table style={{ width: '100%', fontSize: '14px', borderCollapse: 'collapse', fontWeight: 'bold' }}>
+          <tbody>
+            <tr>
+              <td style={{ width: '40%', padding: '2px 0', fontWeight: 'bold' }}>Order #:</td>
+              <td style={{ width: '60%', textAlign: 'right', fontWeight: 'bold' }}>{order.orderNumber}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>KOT #:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{kotNumber} of {totalKots}</td>
+            </tr>
+            {order.tableNumber && (
+              <tr>
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Table:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold', fontSize: '16px' }}>#{order.tableNumber}</td>
+              </tr>
+            )}
+            {order.customerName && (
+              <tr>
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Customer:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{order.customerName}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        <div style={{ fontSize: '14px', margin: '6px 0', fontWeight: 'bold' }}>================================</div>
+
+        <div style={{ width: '100%' }}>
+          {order.items.map((item, idx) => (
+            <div key={idx} style={{ width: '100%' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
+                <tbody>
+                  <tr>
+                    <td style={{ width: '20%', fontWeight: '900', fontSize: '18px', verticalAlign: 'top' }}>{item.quantity}x</td>
+                    <td style={{ width: '80%', fontWeight: '900', fontSize: '16px', textTransform: 'uppercase', verticalAlign: 'top', paddingLeft: '4px' }}>{item.name}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {item.notes && (
+                <div style={{ paddingLeft: '28px', fontSize: '13px', fontWeight: 'bold', marginTop: '2px' }}>
+                  * NOTE: {item.notes}
+                </div>
+              )}
+
+              {(item.modifiers || []).length > 0 && (
+                <div style={{ paddingLeft: '28px', marginTop: '2px' }}>
+                  {item.modifiers?.map((m: any, mIdx: number) => (
+                    <div key={mIdx} style={{ fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                      → {m.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {item.isDeal && item.dealComponents && (
+                <div style={{ paddingLeft: '28px', marginTop: '4px', borderLeft: '2px dashed #000000', marginLeft: '6px' }}>
+                  {item.dealComponents.map((comp, cIdx) => (
+                    <div key={cIdx} style={{ marginBottom: '4px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}>• {comp.componentName}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {idx < order.items.length - 1 && (
+                <div style={{ fontSize: '14px', margin: '6px 0', textAlign: 'center', fontWeight: 'bold', width: '100%' }}>
+                  --------------------------------
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: '14px', margin: '6px 0', fontWeight: 'bold' }}>================================</div>
         
-        {order.tableNumber && (
-          <div className="flex justify-between">
-            <span>Table:</span>
-            <span className="text-lg">#{order.tableNumber}</span>
-          </div>
-        )}
-
-        <div className="flex justify-between">
-          <span>KOT #:</span>
-          <span>{kotNumber}</span>
+        <div style={{ textalign: 'center', fontWeight: 'bold', fontSize: '13px' }}>
+          <div style={{ fontWeight: '900' }}>** REPLACE PREVIOUS KOT **</div>
+          {lastSentAt && <div style={{ fontSize: '11px', marginTop: '2px' }}>PREVIOUS SENT AT: {format(lastSentAt, 'HH:mm')}</div>}
         </div>
-
-        <div className="text-[10px] opacity-70 mt-1">
-          Time: {format(Date.now(), 'HH:mm:ss')}
-        </div>
-      </div>
-
-      <div className="border-b-2 border-black my-3"></div>
-
-      <div className="space-y-6">
-        {/* ADDED */}
-        {deltas.added.length > 0 && (
-          <div>
-            <h3 className="text-xs font-black uppercase border-b border-black mb-2">+ ADDED:</h3>
-            <div className="space-y-3">
-              {deltas.added.map((item, idx) => (
-                <div key={idx} className="flex flex-col">
-                  <div className="flex gap-3 items-start">
-                    <span className="text-lg font-black">{item.quantity}</span>
-                    <span className="text-sm font-bold uppercase">{item.name}</span>
-                  </div>
-                  {item.notes && <p className="text-[10px] italic font-semibold ml-6">* {item.notes}</p>}
-                  {(item.modifiers || []).length > 0 && (
-                    <div className="ml-6 mt-0.5 space-y-0.5">
-                      {item.modifiers?.map((m: any, mIdx: number) => (
-                        <p key={mIdx} className="text-[10px] font-bold uppercase">+ {m.label}</p>
-                      ))}
-                    </div>
-                  )}
-
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* INCREASED */}
-        {deltas.increased.length > 0 && (
-          <div>
-            <h3 className="text-xs font-black uppercase border-b border-black mb-2">+ ADD MORE:</h3>
-            <div className="space-y-3">
-              {deltas.increased.map((d, idx) => (
-                <div key={idx} className="flex flex-col">
-                  <div className="flex gap-3 items-start">
-                    <span className="text-lg font-black">{d.deltaQty}</span>
-                    <span className="text-sm font-bold uppercase">{d.item.name}</span>
-                  </div>
-                  <p className="text-[10px] opacity-60 ml-6">(Total now: {d.item.quantity})</p>
-                  {d.item.notes && <p className="text-[10px] italic font-semibold ml-6">* {d.item.notes}</p>}
-                  {(d.item.modifiers || []).length > 0 && (
-                    <div className="ml-6 mt-0.5 space-y-0.5">
-                      {d.item.modifiers?.map((m: any, mIdx: number) => (
-                        <p key={mIdx} className="text-[10px] font-bold uppercase">+ {m.label}</p>
-                      ))}
-                    </div>
-                  )}
-
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* NOTE CHANGED */}
-        {deltas.noteChanged.length > 0 && (
-          <div>
-            <h3 className="text-xs font-black uppercase border-b border-black mb-2">~ NOTE UPDATE:</h3>
-            <div className="space-y-3">
-              {deltas.noteChanged.map((d, idx) => (
-                <div key={idx} className="flex flex-col">
-                  <div className="flex gap-2 items-start mb-1">
-                    <span className="text-xs font-black">{d.item.quantity} x</span>
-                    <span className="text-xs font-bold uppercase">{d.item.name}</span>
-                  </div>
-                  <div className="ml-4 space-y-1">
-                    <p className="text-[9px] line-through opacity-50 italic">Old: {d.oldNote || '(none)'}</p>
-                    <p className="text-[9px] font-black italic">New: {d.newNote || '(none)'}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* CANCELLED */}
-        {deltas.cancelled.length > 0 && (
-          <div className="bg-black/5 p-2 rounded">
-            <h3 className="text-xs font-black uppercase border-b border-black mb-2 text-center">✕ CANCELLED:</h3>
-            <div className="space-y-2">
-              {deltas.cancelled.map((item, idx) => (
-                <div key={idx} className="flex gap-3 items-center justify-between">
-                  <div className="flex gap-2 items-center">
-                    <span className="text-sm font-black line-through">{item.quantity}</span>
-                    <span className="text-xs font-bold uppercase line-through opacity-60">{item.name}</span>
-                  </div>
-                  <span className="text-[8px] font-bold border border-black px-1">STOP</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="border-b-2 border-black my-4"></div>
-      
-      <div className="text-center font-bold text-[10px]">
-        <p className="uppercase">Update {kotNumber} of {totalKots}</p>
-        {lastSentAt && <p className="opacity-70 mt-1 uppercase text-[8px]">Previous KOT sent at: {format(lastSentAt, 'HH:mm')}</p>}
-        <p className="text-[8px] uppercase mt-4 tracking-widest">— Update End —</p>
-      </div>
     </div>
   );
 });
@@ -253,144 +313,271 @@ export const DeltaKitchenTicket = React.forwardRef<HTMLDivElement, {
 export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; settings: RestaurantSettings }>(
   ({ order, settings }, ref) => {
     return (
-      <div ref={ref} className="p-8 text-black bg-white font-mono text-sm max-w-[300px] mx-auto print:block">
-        <div className="text-center mb-4">
-          <h2 className="text-xl font-black uppercase tracking-tight">{settings.name}</h2>
-          <p className="text-[10px] leading-tight mt-1">{settings.address}</p>
-          {settings.phone && <p className="text-[10px] leading-tight">{settings.phone}</p>}
-          <div className="border-b border-black border-dashed my-2"></div>
-          <p className="text-[10px] uppercase font-bold tracking-tight">{settings.receiptHeader}</p>
-        </div>
-        
-        <div className="space-y-0.5 text-[10px]">
-          <div className="flex justify-between">
-            <span>Order #:</span>
-            <span className="font-bold">{order.orderNumber}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Date:</span>
-            <span>{format(order.createdAt, 'dd/MM/yyyy')}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Time:</span>
-            <span>{format(order.createdAt, 'HH:mm:ss')}</span>
-          </div>
-          <div className="flex justify-between border-t border-black border-dotted pt-1 mt-1">
-            <span>Type:</span>
-            <span className="font-bold uppercase">{order.type}</span>
-          </div>
-          {order.tableNumber && (
-            <div className="flex justify-between">
-              <span>Table:</span>
-              <span className="font-bold">{order.tableNumber}</span>
-            </div>
-          )}
-          {order.customerName && (
-            <div className="flex justify-between">
-              <span>Customer:</span>
-              <span className="truncate max-w-[120px]">{order.customerName}</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span>Cashier:</span>
-            <span>TERMINAL-01</span>
-          </div>
-        </div>
+      <div ref={ref} className="p-4 text-black bg-white max-w-[310px] mx-auto print:block receipt-print-container">
+        <style>{`
+          @media print {
+            @page {
+              size: 80mm auto;
+              margin: 0mm;
+            }
+            body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+            }
+            .receipt-print-container {
+              width: 74mm !important;
+              max-width: 74mm !important;
+              padding: 4mm 2mm 8mm 2mm !important;
+              margin: 0 auto !important;
+              font-family: Arial, Helvetica, sans-serif !important;
+              background: #ffffff !important;
+              color: #000000 !important;
+              display: block !important;
+              box-sizing: border-box !important;
+            }
+            /* Explicit parameters for strong graphic layouts */
+            .receipt-print-container, .receipt-print-container * {
+              color: #000000 !important;
+              background: transparent !important;
+              font-family: Arial, Helvetica, sans-serif !important;
+              box-sizing: border-box !important;
+              position: static !important;
+              float: none !important;
+              font-weight: bold !important;
+              -webkit-font-smoothing: none !important;
+              font-smoothing: none !important;
+            }
+            .receipt-strong-header {
+              font-size: 19px !important;
+              font-weight: 900 !important;
+              line-height: 1.2 !important;
+            }
+            .receipt-bold-meta {
+              font-size: 14px !important;
+              font-weight: bold !important;
+              line-height: 1.4 !important;
+            }
+            .receipt-bold-item {
+              font-size: 15px !important;
+              font-weight: 900 !important;
+              line-height: 1.4 !important;
+            }
+            .receipt-bold-sub {
+              font-size: 13px !important;
+              font-weight: bold !important;
+              line-height: 1.3 !important;
+            }
+            .receipt-bold-totals {
+              font-size: 14px !important;
+              font-weight: bold !important;
+            }
+            .receipt-bold-grand {
+              font-size: 18px !important;
+              font-weight: 900 !important;
+            }
+            .receipt-plain-divider {
+              width: 100% !important;
+              font-size: 14px !important;
+              line-height: 1.0 !important;
+              font-weight: bold !important;
+              text-align: center !important;
+              margin: 4px 0 !important;
+            }
+          }
+        `}</style>
 
-        <div className="border-b border-black border-dashed my-2"></div>
+        {/* HEADER BRANDING SUITE */}
+        <div style={{ textAlign: 'center', width: '100%' }}>
+          <div className="receipt-strong-header" style={{ fontWeight: 'bold', fontSize: '18px' }}>{settings.name}</div>
+          <div className="receipt-bold-meta" style={{ fontSize: '13px', marginTop: '2px' }}>{settings.address}</div>
+          {settings.phone && <div className="receipt-bold-meta" style={{ fontSize: '13px' }}>Phone: {settings.phone}</div>}
+          
+          <div className="receipt-plain-divider">================================</div>
+          <div className="receipt-bold-meta" style={{ fontWeight: 'bold', letterSpacing: '0.5px', fontSize: '13px', textTransform: 'uppercase' }}>
+            {settings.receiptHeader || 'WELCOME TO OUR RESTAURANT'}
+          </div>
+          <div className="receipt-plain-divider">================================</div>
+        </div>
         
-        <div className="mb-4">
-          <table className="w-full text-left text-[10px]">
-            <thead>
-              <tr className="border-b border-black border-dotted">
-                <th className="py-1">Item</th>
-                <th className="py-1 text-center">Qty</th>
-                <th className="py-1 text-right">Total</th>
+        {/* CORE INVOICE TRANSACTION META */}
+        <table style={{ width: '100%', borderCollapse: 'collapse', margin: '2px 0' }}>
+          <tbody>
+            <tr className="receipt-bold-meta">
+              <td style={{ width: '40%', padding: '2px 0', fontWeight: 'bold' }}>Order #:</td>
+              <td style={{ width: '60%', textAlign: 'right', fontWeight: 'bold' }}>{order.orderNumber}</td>
+            </tr>
+            <tr className="receipt-bold-meta">
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Date:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'dd/MM/yyyy')}</td>
+            </tr>
+            <tr className="receipt-bold-meta">
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Time:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'HH:mm:ss')}</td>
+            </tr>
+            <tr className="receipt-bold-meta">
+              <td style={{ padding: '4px 0 2px 0', borderTop: '1px dashed #000000', fontWeight: 'bold' }}>Type:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold', textTransform: 'uppercase', padding: '4px 0 2px 0', borderTop: '1px dashed #000000' }}>
+                {order.type}
+              </td>
+            </tr>
+            {order.tableNumber && (
+              <tr className="receipt-bold-meta">
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Table:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>#{order.tableNumber}</td>
               </tr>
-            </thead>
-            <tbody>
-              {order.items.map((item, idx) => (
-                <React.Fragment key={idx}>
-                  <tr>
-                    <td className="py-1 line-clamp-1">{item.name}</td>
-                    <td className="py-1 text-center">{item.quantity}</td>
-                    <td className="py-1 text-right">{settings.currency}{((item.price || 0) * (item.quantity || 0)).toFixed(2)}</td>
-                  </tr>
-                  {item.notes && (
-                    <tr>
-                      <td colSpan={3} className="text-[8px] italic pb-1 text-slate-700">
-                        Instructions: {item.notes}
-                      </td>
-                    </tr>
-                  )}
-                  {(item.modifiers || []).length > 0 && item.modifiers?.map((m: any, mIdx: number) => (
-                    <tr key={`mod-${mIdx}`}>
-                      <td className="text-[8px] pl-2 opacity-70 tracking-tight">+ {m.label}</td>
-                      <td></td>
-                      <td className="text-[8px] text-right opacity-70">
-                        {m.additionalPrice > 0 ? `${settings.currency}${m.additionalPrice.toFixed(2)}` : ''}
-                      </td>
-                    </tr>
-                  ))}
+            )}
+            {order.customerName && (
+              <tr className="receipt-bold-meta">
+                <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Customer:</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{order.customerName}</td>
+              </tr>
+            )}
+            <tr className="receipt-bold-meta">
+              <td style={{ padding: '2px 0', fontWeight: 'bold' }}>Cashier:</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{order.cashierName || '—'}</td>
+            </tr>
+          </tbody>
+        </table>
 
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="border-b border-black border-dashed mb-2"></div>
+        <div className="receipt-plain-divider">================================</div>
         
-        <div className="text-[10px] space-y-0.5">
-          <div className="flex justify-between">
-            <span>Subtotal:</span>
-            <span>{settings.currency}{(order.subtotal || 0).toFixed(2)}</span>
-          </div>
-          {order.discountAmount !== undefined && order.discountAmount > 0 && (
-            <div className="flex justify-between">
-              <span>
-                Discount
-                {order.discountType === 'percent'
-                  ? ` (${order.discountValue}%)`
-                  : ''
-                }
-              </span>
-              <span>-{settings.currency}{(order.discountAmount || 0).toFixed(2)}</span>
+        {/* CUSTOM INVOICE PRICING ENTRIES TABLE */}
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '2px solid #000000' }}>
+              <th style={{ textAlign: 'left', fontSize: '13px', fontWeight: 'bold', paddingBottom: '6px', width: '55%' }}>ITEM</th>
+              <th style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', paddingBottom: '6px', width: '15%' }}>QTY</th>
+              <th style={{ textAlign: 'right', fontSize: '13px', fontWeight: 'bold', paddingBottom: '6px', width: '30%' }}>TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.items.map((item, idx) => (
+              <React.Fragment key={idx}>
+                {/* Product Identifier Block Line */}
+                <tr className="receipt-bold-item">
+                  <td style={{ textAlign: 'left', width: '55%', fontWeight: '900', verticalAlign: 'top', paddingTop: '6px' }}>{item.name}</td>
+                  <td style={{ textAlign: 'center', width: '15%', fontWeight: '900', verticalAlign: 'top', paddingTop: '6px' }}>{item.quantity}</td>
+                  <td style={{ textAlign: 'right', width: '30%', fontWeight: '900', verticalAlign: 'top', paddingTop: '6px' }}>
+                    {settings.currency}{((item.price || 0) * (item.quantity || 0)).toFixed(2)}
+                  </td>
+                </tr>
+
+                {/* Plain Text Context Instructions */}
+                {item.notes && (
+                  <tr className="receipt-bold-sub">
+                    <td colSpan={3} style={{ paddingLeft: '12px', fontWeight: 'bold', paddingTop: '2px' }}>
+                      * Note: {item.notes}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Sub-item Modifier Layout Parameters */}
+                {(item.modifiers || []).length > 0 && item.modifiers?.map((m: any, mIdx: number) => (
+                  <tr key={`mod-${mIdx}`} className="receipt-bold-sub">
+                    <td colSpan={2} style={{ paddingLeft: '12px', fontWeight: 'bold' }}>+ {m.label}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                      {m.additionalPrice > 0 ? `${settings.currency}${m.additionalPrice.toFixed(2)}` : ''}
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Structured Multi-item Deals Nested Content Array Block */}
+                {item.isDeal && item.dealComponents && (
+                  <tr className="receipt-bold-sub">
+                    <td colSpan={3} style={{ paddingLeft: '12px', paddingTop: '4px' }}>
+                      <div style={{ borderLeft: '2px dashed #000000', paddingLeft: '8px' }}>
+                        {item.dealComponents.map((comp, cIdx) => (
+                          <div key={cIdx} style={{ marginBottom: '4px' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '13px' }}>• {comp.componentName}</div>
+                            {comp.modifiers && comp.modifiers.length > 0 && (
+                              <div style={{ paddingLeft: '12px' }}>
+                                {comp.modifiers.map((m: any, mIdx: number) => (
+                                  <div key={mIdx} style={{ fontSize: '12px', fontWeight: 'bold' }}>— {m.label}</div>
+                                ))}
+                              </div>
+                            )}
+                            {comp.notes && (
+                              <div style={{ paddingLeft: '12px', fontSize: '12px', fontStyle: 'italic', fontWeight: 'bold' }}>
+                                Note: {comp.notes}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
+                {/* Explicit Structural Dashed Item Separation Matrix Requirement */}
+                {idx < order.items.length - 1 && (
+                  <tr>
+                    <td colSpan={3}>
+                      <div className="receipt-plain-divider">--------------------------------</div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="receipt-plain-divider">================================</div>
+        
+        {/* TOTALS VALUE MATRIX */}
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <tbody>
+            <tr className="receipt-bold-totals">
+              <td style={{ padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>Subtotal:</td>
+              <td style={{ textAlign: 'right', padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>{settings.currency}{(order.subtotal || 0).toFixed(2)}</td>
+            </tr>
+            {order.discountAmount !== undefined && order.discountAmount > 0 && (
+              <tr className="receipt-bold-totals">
+                <td style={{ padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>
+                  Discount {order.discountType === 'percent' ? `(${order.discountValue}%)` : ''}:
+                </td>
+                <td style={{ textAlign: 'right', padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>-{settings.currency}{(order.discountAmount || 0).toFixed(2)}</td>
+              </tr>
+            )}
+            {order.deliveryCharge !== undefined && order.deliveryCharge > 0 && (
+              <tr className="receipt-bold-totals">
+                <td style={{ padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>{settings.deliveryChargeLabel || 'Delivery Fee'}:</td>
+                <td style={{ textAlign: 'right', padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>{settings.currency}{(order.deliveryCharge || 0).toFixed(2)}</td>
+              </tr>
+            )}
+            {settings.showTaxLine && (
+              <tr className="receipt-bold-totals">
+                <td style={{ padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>Tax ({settings.taxPercentage}%):</td>
+                <td style={{ textAlign: 'right', padding: '3px 0', fontWeight: 'bold', fontSize: '14px' }}>{settings.currency}{(order.taxAmount || 0).toFixed(2)}</td>
+              </tr>
+            )}
+            
+            {/* Grand Total Execution Matrix */}
+            <tr>
+              <td className="receipt-bold-grand" style={{ borderTop: '1px dashed #000000', padding: '6px 0', fontWeight: '900', fontSize: '17px' }}>GRAND TOTAL:</td>
+              <td className="receipt-bold-grand" style={{ borderTop: '1px dashed #000000', padding: '6px 0', textAlign: 'right', fontWeight: '900', fontSize: '18px' }}>
+                {settings.currency}{(order.total || 0).toFixed(2)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="receipt-plain-divider">================================</div>
+
+        {/* COMPONENT BILL FOOTER INFORMATION */}
+        <div style={{ textAlign: 'center', width: '100%', marginTop: '6px' }}>
+          {settings.receiptFooter && (
+            <div className="receipt-bold-meta" style={{ whiteSpace: 'pre-line', fontWeight: 'bold', fontSize: '13px', lineHeight: '1.4' }}>
+              {settings.receiptFooter}
             </div>
           )}
-          {order.deliveryCharge !== undefined && order.deliveryCharge > 0 && (
-            <div className="flex justify-between">
-              <span>{settings.deliveryChargeLabel || 'Delivery Fee'}:</span>
-              <span>{settings.currency}{(order.deliveryCharge || 0).toFixed(2)}</span>
-            </div>
-          )}
-          {settings.showTaxLine && (
-            <div className="flex justify-between">
-              <span>Tax ({settings.taxPercentage}%):</span>
-              <span>{settings.currency}{(order.taxAmount || 0).toFixed(2)}</span>
-            </div>
-          )}
-          <div className="flex justify-between font-bold text-sm pt-1 mt-1 border-t border-black border-dotted">
-            <span>GRAND TOTAL:</span>
-            <span>{settings.currency}{(order.total || 0).toFixed(2)}</span>
+          <div className="receipt-bold-meta" style={{ fontWeight: 'bold', marginTop: '6px', letterSpacing: '1px', fontSize: '13px' }}>
+            THANK YOU FOR VISITING!
           </div>
-        </div>
-
-        <div className="border-b border-black border-dashed mt-4 mb-2"></div>
-
-        <div className="text-center space-y-4">
-          <p className="text-[10px] uppercase whitespace-pre-line leading-tight">
-            {settings.receiptFooter}
-          </p>
-          <p className="text-[10px] font-bold uppercase tracking-widest">Thank you for visiting!</p>
-          <div className="flex justify-center mt-4">
-             <div className="w-16 h-1 border-b border-black"></div>
+          
+          <div style={{ fontSize: '11px', fontWeight: 'bold', marginTop: '16px', borderTop: '1px solid #000000', paddingTop: '4px' }}>
+            Powered by Saynz • 0347-1887181
           </div>
-        </div>
-
-        <div className="text-[9px] text-[#999999] text-center mt-[10px] italic">
-          <div>─────────────────────</div>
-          <div>Powered by Saynz • 0347-1887181</div>
         </div>
       </div>
     );

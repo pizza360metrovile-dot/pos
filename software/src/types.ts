@@ -15,6 +15,26 @@ export interface MenuItem {
   directStock: number; // Current stock for stocked items
   disabledReason?: 'manual' | 'out_of_stock' | null;
   createdAt: number;
+  isDeal?: boolean;
+}
+
+export interface DealItem {
+  id?: number;
+  dealMenuItemId: string;
+  componentMenuItemId: string;
+  quantity: number;
+  sortOrder: number;
+}
+
+export interface DealOrderComponent {
+  id?: number;
+  orderItemId: string;          // the deal's orderItem id
+  componentMenuItemId: string;
+  componentName: string;        // snapshot of name
+  unitIndex: number;            // 1, 2 etc
+  quantity: number;             // always 1
+  notes?: string;
+  modifiers: any[];             // JSON array of selected modifiers / modifiers payload
 }
 
 export interface Category {
@@ -46,6 +66,8 @@ export interface OrderItem {
   quantity: number;
   notes?: string;
   modifiers?: OrderItemModifier[];
+  isDeal?: boolean;
+  dealComponents?: DealOrderComponent[];
 }
 
 export interface Order {
@@ -73,6 +95,13 @@ export interface Order {
   deletedAt?: number | null;
   deletedReason?: string | null;
   deletedBy?: string | null;
+  cashierName?: string | null;
+  isCancelled?: boolean;
+  cancelledAt?: number | null;
+  cancellationReason?: string | null;
+  cancelledBy?: string | null;
+  completedAt?: number;
+  businessDate?: any;
 }
 
 export interface KotSnapshot {
@@ -81,6 +110,7 @@ export interface KotSnapshot {
   sentAt: number;
   kotNumber: number;
   items: OrderItem[];
+  notes?: string;
 }
 
 export interface RestaurantSettings {
@@ -165,6 +195,28 @@ export interface ModifierOption {
   sortOrder: number;
 }
 
+export interface Expense {
+  id?: number;
+  title: string;
+  amount: number;
+  categoryId: string | number;
+  date: number; // timestamp
+  notes?: string;
+  createdAt: number; // timestamp
+  businessDate?: any;
+}
+
+export interface ExpenseCategory {
+  id?: number;
+  name: string;
+}
+
+export interface Cashier {
+  id?: number;
+  name: string;
+  isActive: boolean;
+}
+
 export interface AppState {
   menuItems: MenuItem[];
   categories: Category[];
@@ -177,4 +229,7 @@ export interface AppState {
   kotSnapshots: KotSnapshot[];
   modifierGroups: ModifierGroup[];
   modifierOptions: ModifierOption[];
+  dealItems: DealItem[];
+  dealOrderComponents: DealOrderComponent[];
+  cashiers: Cashier[];
 }

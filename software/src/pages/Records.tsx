@@ -13,7 +13,6 @@ import {
   FileText, 
   ChevronRight, 
   Trash2, 
-  Download,
   ArrowUpRight,
   ShoppingBag,
   TrendingUp,
@@ -24,14 +23,23 @@ import {
   Check,
   ChevronLeft,
   RotateCcw,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
 import { Order, OrderType, OrderItem } from '../types';
+import { PROTECTION_PASSWORD } from '../constants';
+import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow, isAfter, subHours } from 'date-fns';
+import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDateRange } from '../utils/businessDayCalculation';
 
 const ITEMS_PER_PAGE = 25;
 
@@ -41,12 +49,14 @@ export default function Records() {
     cart, clearCart, menuItems, retrieveOrder: storeRetrieveOrder, 
     cancelHeldOrder: storeCancelHeldOrder, activeOrder, addOrder,
     kotSnapshots, orderType, customerName, tableNumber,
-    deliveryChargeWaived, deliveryChargeWaivedReason, user
+    deliveryChargeWaived, deliveryChargeWaivedReason, user,
+    cashiers = []
   } = useStore();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<OrderType | 'all'>('all');
   const [selectedStatus, setSelectedStatus] = useState<'completed' | 'held' | 'in-progress' | 'all' | 'deleted'>('completed');
+  const [selectedCashier, setSelectedCashier] = useState<string | 'all'>('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editValues, setEditValues] = useState<Partial<Order>>({});
@@ -54,6 +64,36 @@ export default function Records() {
   const [retrievalConfirmData, setRetrievalConfirmData] = useState<Order | null>(null);
   const [deletingOrder, setDeletingOrder] = useState<Order | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
+  
+  // Audit Log states
+  const [openPasswordModal, setOpenPasswordModal] = useState(false);
+  const [passwordValue, setPasswordValue] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [shakeModal, setShakeModal] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [expandedRowIds, setExpandedRowIds] = useState<Record<string, boolean>>({});
+
+  const handlePasswordModalConfirm = () => {
+    if (passwordValue === PROTECTION_PASSWORD) {
+      setPasswordError('');
+      setOpenPasswordModal(false);
+      setPasswordValue('');
+      setShowPassword(false);
+      setShowAuditLog(true);
+    } else {
+      setPasswordError('Incorrect password. Action not allowed.');
+      setPasswordValue('');
+      setShakeModal(true);
+    }
+  };
+
+  const handlePasswordModalCancel = () => {
+    setOpenPasswordModal(false);
+    setPasswordValue('');
+    setShowPassword(false);
+    setPasswordError('');
+  };
 
   // Date range filter states
   const [selectedRange, setSelectedRange] = useState<'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'all' | 'custom'>('today');
@@ -80,41 +120,65 @@ export default function Records() {
   // Compute calculated date boundaries based on choice
   const dateBounds = useMemo(() => {
     const now = new Date();
+    const nowMs = now.getTime();
     
     if (selectedRange === 'today') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      return { start, end };
+      const bizToday = getBusinessDate(nowMs);
+      const rangeStart = getBusinessDayStart(bizToday);
+      const rangeEnd = nowMs;
+      return {
+        start: getBusinessDate(rangeStart),
+        end: getBusinessDate(rangeEnd)
+      };
     }
     if (selectedRange === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      const start = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
-      const end = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
-      return { start, end };
+      const bizToday = getBusinessDate(nowMs);
+      const yesterday = new Date(bizToday);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const rangeStart = getBusinessDayStart(yesterday);
+      const rangeEnd = getBusinessDayStart(bizToday) - 1;
+      return {
+        start: getBusinessDate(rangeStart),
+        end: getBusinessDate(rangeEnd)
+      };
     }
     if (selectedRange === 'week') {
-      const currentDay = now.getDay();
+      const bizToday = getBusinessDate(nowMs);
+      const currentDay = bizToday.getDay();
       const gap = currentDay === 0 ? 6 : currentDay - 1;
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - gap);
-      const start = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      return { start, end };
+      const monday = new Date(bizToday);
+      monday.setDate(bizToday.getDate() - gap);
+      const rangeStart = getBusinessDayStart(monday);
+      const rangeEnd = nowMs;
+      return {
+        start: getBusinessDate(rangeStart),
+        end: getBusinessDate(rangeEnd)
+      };
     }
     if (selectedRange === 'month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      return { start, end };
+      const bizToday = getBusinessDate(nowMs);
+      const firstOfMonth = new Date(bizToday.getFullYear(), bizToday.getMonth(), 1);
+      const rangeStart = getBusinessDayStart(firstOfMonth);
+      const rangeEnd = nowMs;
+      return {
+        start: getBusinessDate(rangeStart),
+        end: getBusinessDate(rangeEnd)
+      };
     }
     if (selectedRange === 'last-month') {
-      const firstOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-      const lastOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-      return { start: firstOfLastMonth, end: lastOfLastMonth };
+      const bizToday = getBusinessDate(nowMs);
+      const firstOfLastMonth = new Date(bizToday.getFullYear(), bizToday.getMonth() - 1, 1);
+      const lastOfLastMonth = new Date(bizToday.getFullYear(), bizToday.getMonth(), 0);
+      const rangeStart = getBusinessDayStart(firstOfLastMonth);
+      const rangeEnd = getBusinessDayEnd(lastOfLastMonth);
+      return {
+        start: getBusinessDate(rangeStart),
+        end: getBusinessDate(rangeEnd)
+      };
     }
     if (selectedRange === 'custom') {
       const start = customStart ? new Date(`${customStart}T00:00:00`) : null;
-      const end = customEnd ? new Date(`${customEnd}T23:59:59.999`) : null;
+      const end = customEnd ? new Date(`${customEnd}T00:00:00`) : null;
       return { start, end };
     }
     
@@ -125,7 +189,7 @@ export default function Records() {
   const rangeOrders = useMemo(() => {
     return orders.filter(order => {
       if (order.isDeleted) return false;
-      const orderDate = order.createdAt;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
       if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
       if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
       return true;
@@ -136,7 +200,7 @@ export default function Records() {
   const deletedRangeOrders = useMemo(() => {
     return orders.filter(order => {
       if (!order.isDeleted) return false;
-      const orderDate = order.createdAt;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
       if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
       if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
       return true;
@@ -153,17 +217,17 @@ export default function Records() {
 
   // Calculations derived dynamically from selected range
   const rangeStats = useMemo(() => {
-    const totalOrders = rangeOrders.length;
-    const totalRevenue = rangeOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const completedOrders = rangeOrders.filter(o => o.status === 'completed' && !o.isDeleted && !o.isCancelled);
+    const totalOrders = completedOrders.length;
+    const totalRevenue = completedOrders.reduce((sum, o) => sum + (o.total || 0), 0);
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-    const totalTax = rangeOrders.reduce((sum, o) => sum + (o.taxAmount || 0), 0);
-    const totalDeliveryCharges = rangeOrders.reduce((sum, o) => sum + (o.deliveryCharge || 0), 0);
-
-    const totalDiscounts = rangeOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
+    const totalTax = completedOrders.reduce((sum, o) => sum + (o.taxAmount || 0), 0);
+    const totalDeliveryCharges = completedOrders.reduce((sum, o) => sum + (o.deliveryCharge || 0), 0);
+    const totalDiscounts = completedOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
 
     // Top selling item by quantity sold
     const itemQuantities: { [name: string]: number } = {};
-    rangeOrders.forEach(order => {
+    completedOrders.forEach(order => {
       order.items.forEach(it => {
         const name = it.name;
         itemQuantities[name] = (itemQuantities[name] || 0) + (it.quantity || 0);
@@ -190,26 +254,90 @@ export default function Records() {
     };
   }, [rangeOrders]);
 
+  const auditLogStats = useMemo(() => {
+    // Filter cancelled and deleted orders within date range
+    const cancelledInPeriod = orders.filter(order => {
+      if (!order.isCancelled) return false;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+      return true;
+    });
+
+    const deletedInPeriod = orders.filter(order => {
+      if (!order.isDeleted) return false;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+      return true;
+    });
+
+    // Total counts and values
+    const cancelledCount = cancelledInPeriod.length;
+    const cancelledTotalValue = cancelledInPeriod.reduce((sum, o) => sum + (o.total || 0), 0);
+    
+    const deletedCount = deletedInPeriod.length;
+    const deletedTotalValue = deletedInPeriod.reduce((sum, o) => sum + (o.total || 0), 0);
+
+    // Rate calculations: Count divided by total normal completed order count in that range
+    const normalCompletedInPeriodCount = orders.filter(order => {
+      if (order.isDeleted || order.isCancelled) return false;
+      if (order.status !== 'completed') return false;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
+      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
+      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
+      return true;
+    }).length;
+
+    const cancelledRate = normalCompletedInPeriodCount > 0 ? (cancelledCount / normalCompletedInPeriodCount) * 100 : 0;
+    const deletedRate = normalCompletedInPeriodCount > 0 ? (deletedCount / normalCompletedInPeriodCount) * 100 : 0;
+
+    return {
+      cancelledInPeriod,
+      deletedInPeriod,
+      cancelledCount,
+      cancelledTotalValue,
+      deletedCount,
+      deletedTotalValue,
+      normalCompletedCount: normalCompletedInPeriodCount,
+      cancelledRate,
+      deletedRate
+    };
+  }, [orders, dateBounds]);
+
+  const toggleRowExpanded = (orderId: string) => {
+    setExpandedRowIds(prev => ({
+      ...prev,
+      [orderId]: !prev[orderId]
+    }));
+  };
+
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
-      const orderDate = order.createdAt;
+      if (order.isCancelled) return false;
+      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
       if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
       if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
 
       const matchesSearch = 
         order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (order.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
+        (order.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (order.cashierName || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = selectedType === 'all' || order.type === selectedType;
       
+      const matchesCashier = selectedCashier === 'all' || 
+        (selectedCashier === 'none' && !order.cashierName) ||
+        (order.cashierName === selectedCashier);
+
       if (selectedStatus === 'deleted') {
-        return order.isDeleted && matchesSearch && matchesType;
+        return order.isDeleted && matchesSearch && matchesType && matchesCashier;
       } else {
         if (order.isDeleted) return false;
         const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
-        return matchesSearch && matchesType && matchesStatus;
+        return matchesSearch && matchesType && matchesStatus && matchesCashier;
       }
     });
-  }, [orders, searchTerm, selectedType, selectedStatus, dateBounds]);
+  }, [orders, searchTerm, selectedType, selectedStatus, selectedCashier, dateBounds]);
 
   const totalPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE);
   const paginatedOrders = useMemo(() => {
@@ -370,10 +498,18 @@ export default function Records() {
               <h1 className="text-base font-bold text-text-primary uppercase tracking-tight leading-none">Journal Audit</h1>
               <p className="text-text-muted text-[13px] font-medium mt-2">Historical ledger and operational trace documentation</p>
             </div>
-            <div className="flex gap-4">
-              <button className="px-5 py-2.5 bg-bg-surface border border-border-light text-text-primary rounded-md hover:bg-bg-surface-2 transition-all flex items-center gap-3 shadow-sm">
-                <Download className="w-4 h-4 text-text-muted" />
-                <span className="text-[11px] uppercase font-bold tracking-widest leading-none">Generate Export</span>
+            <div className="flex gap-4 animate-fade-in">
+              <button 
+                onClick={() => {
+                  setPasswordValue('');
+                  setPasswordError('');
+                  setOpenPasswordModal(true);
+                }}
+                title="View deletion history (password protected)"
+                className="px-5 py-2.5 bg-bg-surface border border-red-200 text-text-primary rounded-md hover:bg-red-50/45 transition-all flex items-center gap-3 shadow-sm cursor-pointer"
+              >
+                <Lock className="w-4 h-4 text-red-550" />
+                <span className="text-[11px] uppercase font-bold tracking-widest leading-none text-red-600">Audit Log</span>
               </button>
             </div>
           </div>
@@ -544,17 +680,53 @@ export default function Records() {
             </span>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-6 mb-6">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4 mb-6">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-text-placeholder z-10 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search ledger by order ID or subject..."
+                placeholder="Search ledger by order ID, customer or cashier..."
                 className="input-field pl-[42px] font-mono uppercase tracking-tight"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+            
+            {/* Filter Dropdowns */}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Type Filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-text-placeholder uppercase tracking-widest">Type</span>
+                <select
+                  value={selectedType}
+                  onChange={(e) => { setSelectedType(e.target.value as any); setCurrentPage(1); }}
+                  className="bg-bg-surface-2 border border-border-light text-text-primary px-3 py-2 rounded-lg font-bold text-[11px] uppercase tracking-wider outline-none focus:border-accent cursor-pointer min-w-[120px]"
+                >
+                  <option value="all">All Types</option>
+                  <option value="dine-in">Dine In</option>
+                  <option value="takeaway">Takeaway</option>
+                  <option value="delivery">Delivery</option>
+                </select>
+              </div>
+
+              {/* Cashier Filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-text-placeholder uppercase tracking-widest">Cashier</span>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => { setSelectedCashier(e.target.value); setCurrentPage(1); }}
+                  className="bg-bg-surface-2 border border-border-light text-text-primary px-3 py-2 rounded-lg font-bold text-[11px] uppercase tracking-wider outline-none focus:border-accent cursor-pointer min-w-[140px]"
+                >
+                  <option value="all">All Cashiers</option>
+                  <option value="none">No Cashier</option>
+                  {/* Dynamic set of completed/held cashiers */}
+                  {Array.from(new Set(orders.map(o => o.cashierName).filter(Boolean))).map(name => (
+                    <option key={name} value={name!}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light shadow-sm shrink-0">
               {['all', 'in-progress', 'completed', 'held', 'deleted'].map(status => (
                 <button
@@ -608,7 +780,6 @@ export default function Records() {
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Original Total</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Deleted At</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left">Reason</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Deleted By</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '80px', minWidth: '80px' }}>Restore</th>
                   </tr>
@@ -619,6 +790,7 @@ export default function Records() {
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '80px', minWidth: '80px' }}>Order #</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Date/Time</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Customer</th>
+                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Cashier</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
                     <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Total</th>
@@ -630,7 +802,7 @@ export default function Records() {
               <tbody className="divide-y divide-border-light">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={selectedStatus === 'deleted' ? 9 : 8} className="p-12 text-center">
+                    <td colSpan={selectedStatus === 'deleted' ? 8 : 9} className="p-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3 py-12">
                         <AlertCircle className="w-8 h-8 text-text-placeholder" />
                         <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest">
@@ -651,10 +823,10 @@ export default function Records() {
                     >
                       <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '120px', minWidth: '120px' }}>
                         <div className="flex items-center gap-1.5">
-                          <span>{order.orderNumber}</span>
-                          <span className="px-1 py-0.5 text-[8px] bg-danger text-white rounded font-sans uppercase font-black tracking-wider leading-none shrink-0">
-                            DELETED
-                          </span>
+                           <span>{order.orderNumber}</span>
+                           <span className="px-1 py-0.5 text-[8px] bg-danger text-white rounded font-sans uppercase font-black tracking-wider leading-none shrink-0">
+                             DELETED
+                           </span>
                         </div>
                       </td>
                       <td className="p-[14px_16px] text-[14px]" style={{ width: '120px', minWidth: '120px' }}>
@@ -681,9 +853,6 @@ export default function Records() {
                             <span className="text-[10px] uppercase font-bold tracking-widest mt-0.5">{format(order.deletedAt, 'dd MMM yy')}</span>
                           </div>
                         ) : '—'}
-                      </td>
-                      <td className="p-[14px_16px] text-xs truncate max-w-[200px]" title={order.deletedReason || ''}>
-                        {order.deletedReason || '—'}
                       </td>
                       <td className="p-[14px_16px] text-xs truncate max-w-[150px]" title={order.deletedBy || ''}>
                         {order.deletedBy || '—'}
@@ -726,6 +895,9 @@ export default function Records() {
                       </td>
                       <td className="p-[14px_16px] text-[14px] text-text-primary font-bold uppercase tracking-tight truncate max-w-[140px]" style={{ width: '140px', minWidth: '140px' }} title={order.customerName || ''}>
                         {order.customerName || '—'}
+                      </td>
+                      <td className="p-[14px_16px] text-[14px] text-text-primary font-bold uppercase tracking-tight truncate max-w-[120px]" style={{ width: '120px', minWidth: '120px' }} title={order.cashierName || ''}>
+                        {order.cashierName || '—'}
                       </td>
                       <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '100px', minWidth: '100px' }}>
                         <span className="badge sm font-bold uppercase tracking-widest">
@@ -910,12 +1082,6 @@ export default function Records() {
                           <span className="font-semibold text-text-primary">{selectedOrder.deletedBy || '—'}</span>
                         </div>
                       </div>
-                      <div className="text-[11px] pt-1">
-                        <span className="block text-text-muted uppercase font-bold tracking-tight mb-0.5">Reason for Deletion</span>
-                        <p className="text-text-primary bg-bg-surface border border-border-light rounded px-2.5 py-2 italic leading-relaxed mt-1">
-                          "{selectedOrder.deletedReason || 'No reason provided'}"
-                        </p>
-                      </div>
                     </div>
                   )}
                   <section className="grid grid-cols-2 gap-4">
@@ -951,6 +1117,27 @@ export default function Records() {
                                 {item.notes && (
                                   <div className="text-[12px] text-text-muted font-medium mt-1">
                                     Notes: {item.notes}
+                                  </div>
+                                )}
+                                {item.isDeal && item.dealComponents && (
+                                  <div className="mt-2 pl-3 border-l-2 border-accent/20 flex flex-col gap-1.5">
+                                    {item.dealComponents.map((comp, cIdx) => (
+                                      <div key={cIdx} className="flex flex-col text-xs text-text-secondary">
+                                        <span className="font-semibold text-accent leading-none">
+                                          • {comp.componentName} <span className="text-text-muted font-normal text-[10px]">(unit {comp.unitIndex})</span>
+                                        </span>
+                                        {comp.modifiers && comp.modifiers.length > 0 && (
+                                          <div className="pl-3 flex flex-col border-l border-dashed border-border-light mt-0.5">
+                                            {comp.modifiers.map((mod: any, mIdx: number) => (
+                                              <span key={mIdx} className="text-[11px] text-text-muted leading-relaxed">+ {mod.label}</span>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {comp.notes && (
+                                          <span className="pl-3 text-[11px] italic text-text-placeholder mt-0.5">Note: "{comp.notes}"</span>
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
                                 )}
                               </div>
@@ -1202,6 +1389,415 @@ export default function Records() {
                 Delete Order
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password Protection Modal */}
+      {openPasswordModal && (
+        <div className="fixed inset-0 z-[201] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in no-print">
+          <motion.div
+            animate={shakeModal ? { x: [-10, 10, -10, 10, -5, 5, 0] } : {}}
+            transition={{ duration: 0.4 }}
+            onAnimationComplete={() => setShakeModal(false)}
+            className="w-full max-w-md bg-bg-surface border border-border-light rounded-2xl shadow-2xl p-8 space-y-6 text-text-primary"
+          >
+            <div className="flex flex-col items-center text-center space-y-4 animate-fade-in">
+              <div className="p-4 bg-red-100 rounded-full">
+                <Lock className="w-8 h-8 text-red-600 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-[17px] font-extrabold text-text-primary uppercase tracking-tight leading-none">Security Verification</h3>
+                <p className="text-text-muted text-[13px] font-medium leading-relaxed">
+                  Enter password to access operational audit journals
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="relative">
+                <input
+                  autoFocus
+                  type={showPassword ? 'text' : 'password'}
+                  value={passwordValue}
+                  onChange={(e) => {
+                    setPasswordValue(e.target.value);
+                    setPasswordError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handlePasswordModalConfirm();
+                    }
+                  }}
+                  placeholder="Enter password"
+                  className="w-full p-4 pr-12 rounded-xl bg-bg-surface-2 border border-border-light text-text-primary font-bold placeholder-text-placeholder focus:border-accent focus:ring-1 focus:ring-accent focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-text-placeholder hover:text-text-primary transition-colors focus:outline-hidden cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+
+              {passwordError && (
+                <p className="text-danger text-xs font-bold uppercase tracking-tight text-center px-1">
+                  {passwordError}
+                </p>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="flex gap-4 pt-4 border-t border-border-light">
+              <button
+                onClick={handlePasswordModalCancel}
+                className="flex-1 py-4 bg-bg-surface-2 text-text-placeholder rounded-xl font-bold uppercase text-[11px] tracking-widest hover:bg-border-light transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePasswordModalConfirm}
+                className="flex-1 py-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold uppercase text-[11px] tracking-widest transition-all cursor-pointer shadow-lg shadow-red-600/20"
+              >
+                Verify
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Operations Audit Log Full-Screen View */}
+      {showAuditLog && (
+        <div className="fixed inset-0 z-[200] bg-bg-app flex flex-col overflow-y-auto p-8 lg:p-12 custom-scrollbar animate-fade-in no-print text-text-primary">
+          {/* Header */}
+          <header className="mb-8 flex justify-between items-start border-b border-border-light pb-6 shrink-0">
+            <div>
+              <div className="flex items-center gap-3">
+                <span className="p-2 bg-red-100 rounded-lg text-red-650">
+                  <ShieldAlert className="w-5 h-5 text-red-600 animate-pulse" />
+                </span>
+                <div>
+                  <h1 className="text-lg font-black text-text-primary uppercase tracking-tight leading-none flex items-center gap-2">
+                    Operations Audit Journal
+                  </h1>
+                  <p className="text-text-muted text-[13px] font-medium mt-1.5 leading-none">
+                    Administrative log tracing deletions and mid-flow order cancellations for inspection
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setShowAuditLog(false)}
+              className="px-5 py-2.5 bg-bg-surface-2 hover:bg-border-light border border-border-light text-text-primary rounded-xl transition-all flex items-center gap-2.5 font-bold uppercase text-[10px] tracking-widest shadow-sm cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+              Exit Audit View
+            </button>
+          </header>
+
+          {/* Secure Information Banner */}
+          <div className="bg-red-500/5 border border-red-200/50 rounded-2xl p-4 mb-8 flex items-start gap-4">
+            <span className="p-2 bg-red-100 rounded-xl text-red-600 mt-0.5">
+              <AlertCircle className="w-4 h-4 animate-bounce" />
+            </span>
+            <div className="space-y-1 text-xs leading-relaxed text-red-800">
+              <div className="font-extrabold uppercase tracking-wide">Administrative Warning & Context Logging</div>
+              <p className="text-text-muted">
+                All activities in this secure viewport are cryptographically logged. Unauthorized viewing is strictly prohibited.
+                Audit results represent order records matching active filter range bounds: 
+                <span className="font-bold text-text-primary font-mono ml-1 px-1.5 py-0.5 rounded bg-bg-surface border border-border-light">
+                  {dateBounds.start ? format(dateBounds.start, 'dd MMM yyyy') : 'Beginning of records'} — {dateBounds.end ? format(dateBounds.end, 'dd MMM yyyy') : 'Present'}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {/* 3-Column Bento Grid */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
+            
+            {/* Column 1: Cancelled Orders */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-bg-surface p-4 border border-border-light rounded-2xl shadow-xs">
+                <div>
+                  <h2 className="text-xs font-black uppercase text-text-primary tracking-widest flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                    Cancelled Orders (KOTs)
+                  </h2>
+                  <p className="text-[10px] text-text-muted mt-1">Interrupted in-progress active preparation</p>
+                </div>
+                <span className="badge outline accent font-mono text-xs font-bold px-2 py-0.5 bg-red-500/10 text-red-600 border border-red-200/30">
+                  {auditLogStats.cancelledCount}
+                </span>
+              </div>
+
+              <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1 select-none custom-scrollbar">
+                {auditLogStats.cancelledInPeriod.length === 0 ? (
+                  <div className="bg-bg-surface-2 border border-border-light border-dashed rounded-2xl p-10 text-center text-text-placeholder text-xs uppercase font-extrabold tracking-widest py-16">
+                    No cancellations recorded
+                  </div>
+                ) : (
+                  auditLogStats.cancelledInPeriod.map(order => {
+                    const isExpanded = !!expandedRowIds[order.id];
+                    return (
+                      <div 
+                        key={order.id}
+                        className="bg-bg-surface border border-border-light rounded-xl hover:border-red-300 transition-all shadow-xs overflow-hidden"
+                      >
+                        {/* Summary Header */}
+                        <div 
+                          onClick={() => toggleRowExpanded(order.id)}
+                          className="p-4 flex justify-between items-start gap-3 cursor-pointer select-none"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-text-primary font-mono">
+                                #{order.orderNumber}
+                              </span>
+                              <span className="px-1.5 py-0.5 text-[8px] bg-red-100 text-red-650 rounded uppercase font-black tracking-wider leading-none">
+                                Cancelled
+                              </span>
+                              <span className="badge sm font-bold uppercase tracking-widest">
+                                {order.type}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-bold uppercase tracking-wider">
+                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM HH:mm') : '—'}</span>
+                              <span>•</span>
+                              <span>By: {order.cashierName || '—'}</span>
+                            </div>
+                          </div>
+                          
+                          <div className="text-right flex items-center gap-3">
+                            <div className="space-y-1.5">
+                              <div className="text-xs font-bold font-mono tracking-tight text-text-primary">
+                                {settings.currency}{(order.total || 0).toFixed(2)}
+                              </div>
+                              <div className="text-[8px] text-text-muted leading-none uppercase tracking-widest font-extrabold">
+                                Total Original
+                              </div>
+                            </div>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-text-placeholder" /> : <ChevronDown className="w-4 h-4 text-text-placeholder" />}
+                          </div>
+                        </div>
+
+                        {/* Expandable Panel */}
+                        {isExpanded && (
+                          <div className="bg-red-50/20 border-t border-red-100/55 p-4 space-y-3 text-xs animate-fade-in text-text-primary">
+                            <div className="space-y-1 bg-white border border-red-100 rounded-lg p-3">
+                              <span className="block text-[8px] text-red-650 font-black uppercase tracking-widest">
+                                Cancellation Reason
+                              </span>
+                              <span className="block font-medium text-text-primary italic">
+                                "{order.cancellationReason || 'No reason provided'}"
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3 text-[10px]">
+                              <div className="bg-white border border-border-light rounded-lg p-2.5">
+                                <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Cancelled At</span>
+                                <span className="font-mono font-bold text-text-primary">
+                                  {order.cancelledAt ? format(order.cancelledAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                                </span>
+                              </div>
+                              <div className="bg-white border border-border-light rounded-lg p-2.5">
+                                <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Authorizing User</span>
+                                <span className="font-bold text-text-primary">
+                                  {order.cancelledBy || 'System/Cashier'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Column 2: Deleted Orders */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-bg-surface p-4 border border-border-light rounded-2xl shadow-xs">
+                <div>
+                  <h2 className="text-xs font-black uppercase text-text-primary tracking-widest flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-600"></span>
+                    Deleted Orders (Completed)
+                  </h2>
+                  <p className="text-[10px] text-text-muted mt-1">Settled orders purged from database</p>
+                </div>
+                <span className="badge outline accent font-mono text-xs font-bold px-2 py-0.5 bg-red-650/10 text-red-650 border border-red-200/30">
+                  {auditLogStats.deletedCount}
+                </span>
+              </div>
+
+              <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1 select-none custom-scrollbar">
+                {auditLogStats.deletedInPeriod.length === 0 ? (
+                  <div className="bg-bg-surface-2 border border-border-light border-dashed rounded-2xl p-10 text-center text-text-placeholder text-xs uppercase font-extrabold tracking-widest py-16">
+                    No deletions recorded
+                  </div>
+                ) : (
+                  auditLogStats.deletedInPeriod.map(order => {
+                    const isExpanded = !!expandedRowIds[order.id];
+                    return (
+                      <div 
+                        key={order.id}
+                        className="bg-bg-surface border border-border-light rounded-xl hover:border-red-300 transition-all shadow-xs overflow-hidden"
+                      >
+                        {/* Summary Header */}
+                        <div 
+                          onClick={() => toggleRowExpanded(order.id)}
+                          className="p-4 flex justify-between items-start gap-3 cursor-pointer select-none"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-text-primary font-mono">
+                                #{order.orderNumber}
+                              </span>
+                              <span className="px-1.5 py-0.5 text-[8px] bg-red-100 text-red-650 rounded uppercase font-black tracking-wider leading-none">
+                                Deleted
+                              </span>
+                              <span className="badge sm font-bold uppercase tracking-widest">
+                                {order.type}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-bold uppercase tracking-wider">
+                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM HH:mm') : '—'}</span>
+                              <span>•</span>
+                              <span>By: {order.cashierName || '—'}</span>
+                            </div>
+                          </div>
+                          
+                          <div className="text-right flex items-center gap-3">
+                            <div className="space-y-1.5">
+                              <div className="text-xs font-bold font-mono tracking-tight text-text-primary">
+                                {settings.currency}{(order.total || 0).toFixed(2)}
+                              </div>
+                              <div className="text-[8px] text-text-muted leading-none uppercase tracking-widest font-extrabold">
+                                Total Original
+                              </div>
+                            </div>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-text-placeholder" /> : <ChevronDown className="w-4 h-4 text-text-placeholder" />}
+                          </div>
+                        </div>
+
+                        {/* Expandable Panel */}
+                        {isExpanded && (
+                          <div className="bg-red-50/20 border-t border-red-100/55 p-4 space-y-3 text-xs animate-fade-in text-text-primary">
+                            <div className="space-y-1 bg-white border border-red-100 rounded-lg p-3">
+                              <span className="block text-[8px] text-red-650 font-black uppercase tracking-widest">
+                                Reason for Deletion
+                              </span>
+                              <span className="block font-medium text-text-primary italic">
+                                "{order.deletedReason || 'No reason provided'}"
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3 text-[10px]">
+                              <div className="bg-white border border-border-light rounded-lg p-2.5">
+                                <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Deleted At</span>
+                                <span className="font-mono font-bold text-text-primary">
+                                  {order.deletedAt ? format(order.deletedAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                                </span>
+                              </div>
+                              <div className="bg-white border border-border-light rounded-lg p-2.5">
+                                <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Deleted By</span>
+                                <span className="font-bold text-text-primary">
+                                  {order.deletedBy || 'System/Cashier'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Column 3: Summary & Actionable Rates */}
+            <div className="space-y-6">
+              <div className="bg-bg-surface p-4 border border-border-light rounded-2xl shadow-xs">
+                <h2 className="text-xs font-black uppercase text-text-primary tracking-widest">
+                  Incident Analytics & Metrics
+                </h2>
+                <p className="text-[10px] text-text-muted mt-1">Operational impact ratios for authorization baseline</p>
+              </div>
+
+              {/* Analytics Bento Grid */}
+              <div className="space-y-4">
+                
+                {/* Baseline Stat Card */}
+                <div className="bg-bg-surface-2 p-4 rounded-xl border border-border-light shadow-sm flex justify-between items-center">
+                  <div>
+                    <span className="text-[9px] text-text-muted font-black uppercase tracking-widest block">Normal Completed Volume</span>
+                    <span className="text-lg font-black font-mono tracking-tight text-text-primary">{auditLogStats.normalCompletedCount}</span>
+                  </div>
+                  <span className="p-2.5 bg-bg-surface rounded-xl border border-border-light text-text-muted">
+                    <Check className="w-4 h-4" />
+                  </span>
+                </div>
+
+                {/* Cancelled Incident Summary */}
+                <div className="bg-bg-surface p-5 rounded-2xl border border-border-light shadow-xs space-y-4">
+                  <div className="border-b border-border-light pb-3 flex justify-between items-center">
+                    <span className="text-[10px] text-red-650 font-black uppercase tracking-widest block font-extrabold">Cancellations</span>
+                    <span className="px-2 py-0.5 text-[9px] bg-red-100 text-red-650 border border-red-200/20 font-bold uppercase tracking-wider rounded">
+                      Rate: {auditLogStats.cancelledRate.toFixed(2)}%
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 col-span-2">
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] text-text-muted font-bold uppercase tracking-wider block">Incident Count</span>
+                      <span className="text-xl font-black font-mono tracking-tight text-text-primary">
+                        {auditLogStats.cancelledCount}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] text-text-muted font-bold uppercase tracking-wider block">Purged Value</span>
+                      <span className="text-xl font-black font-mono tracking-tight text-text-primary">
+                        {settings.currency}{auditLogStats.cancelledTotalValue.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Deleted Incident Summary */}
+                <div className="bg-bg-surface p-5 rounded-2xl border border-border-light shadow-xs space-y-4">
+                  <div className="border-b border-border-light pb-3 flex justify-between items-center">
+                    <span className="text-[10px] text-red-650 font-black uppercase tracking-widest block font-extrabold">Completed Deletions</span>
+                    <span className="px-2 py-0.5 text-[9px] bg-red-100 text-red-650 border border-red-200/20 font-bold uppercase tracking-wider rounded">
+                      Rate: {auditLogStats.deletedRate.toFixed(2)}%
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 col-span-2">
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] text-text-muted font-bold uppercase tracking-wider block">Incident Count</span>
+                      <span className="text-xl font-black font-mono tracking-tight text-text-primary">
+                        {auditLogStats.deletedCount}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] text-text-muted font-bold uppercase tracking-wider block">Purged Value</span>
+                      <span className="text-xl font-black font-mono tracking-tight text-text-primary">
+                        {settings.currency}{auditLogStats.deletedTotalValue.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Info Text */}
+                <div className="bg-bg-surface-2 border border-border-light rounded-xl p-4 text-[10px] leading-relaxed text-text-muted italic">
+                  * Incident Rate Calculation represents total administrative cancellations/deletions normalized against completed standard receipts in selection bounds.
+                </div>
+
+              </div>
+            </div>
+
           </div>
         </div>
       )}
