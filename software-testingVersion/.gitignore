@@ -1,0 +1,20 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+# Electron build output
+release/
+dist/
+out/
+
+# Electron files
+*.icns
+*.ico
+*.dmg
+*.exe
+*.AppImage
+*.deb

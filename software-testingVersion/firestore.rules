@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core validation helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validate UsedLicenseKey
+    function isValidUsedLicenseKey(data) {
+      return data.keys().hasAll(['signature', 'timestamp', 'restaurantId', 'syncedAt'])
+        && data.keys().size() == 4
+        && data.signature is string && data.signature.size() <= 256
+        && data.timestamp is string && data.timestamp.size() <= 128
+        && data.restaurantId is string && data.restaurantId.size() <= 128
+        && data.syncedAt is number;
+    }
+
+    // Validate SubscriptionSettings
+    function isValidSubscriptionSettings(data) {
+      return data.keys().hasAll(['restaurantId', 'expiryDate', 'updatedAt'])
+        && data.keys().size() == 3
+        && data.restaurantId is string && data.restaurantId.size() <= 128
+        && data.expiryDate is number
+        && data.updatedAt is number;
+    }
+
+    // Collection: used_license_keys
+    match /used_license_keys/{signature} {
+      allow create: if isValidId(signature) && isValidUsedLicenseKey(request.resource.data) && request.resource.data.signature == signature;
+      allow get: if isValidId(signature);
+    }
+
+    // Collection: subscriptionSettings
+    match /subscriptionSettings/{restaurantId} {
+      allow create, update: if isValidId(restaurantId) && isValidSubscriptionSettings(request.resource.data) && request.resource.data.restaurantId == restaurantId;
+      allow get: if isValidId(restaurantId);
+    }
+
+    // Collection: appControl
+    match /appControl/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

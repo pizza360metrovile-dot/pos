@@ -1,0 +1,246 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* ── Backgrounds ── */
+  --bg-app:         #F0F2F5;  /* overall page bg */
+  --bg-surface:     #FFFFFF;  /* cards, modals, panels */
+  --bg-surface-2:   #F7F8FA;  /* subtle inner sections */
+  --bg-surface-3:   #ECEEF2;  /* hover states, dividers, tags */
+
+  /* ── Sidebar ── */
+  --bg-sidebar:     #1A1D23;  /* deep dark sidebar */
+  --bg-sidebar-hover:  #2A2D35;
+  --bg-sidebar-active: #3B82F6; /* accent blue */
+  --text-sidebar:      #A0A8B8;
+  --text-sidebar-active: #FFFFFF;
+
+  /* ── Text ── */
+  --text-primary:   #111827;  /* headings, labels */
+  --text-secondary: #374151;  /* body text, descriptions */
+  --text-muted:     #6B7280;  /* helper text, timestamps */
+  --text-placeholder: #9CA3AF;/* input placeholders */
+  --text-disabled:  #D1D5DB;  /* disabled elements */
+  --text-inverse:   #FFFFFF;  /* text on dark bg */
+
+  /* ── Accent / Primary ── */
+  --accent:         #3B82F6;  /* primary blue */
+  --accent-hover:   #2563EB;
+  --accent-light:   #EFF6FF;  /* accent tinted bg */
+  --accent-border:  #BFDBFE;  /* accent tinted border */
+
+  /* ── Borders ── */
+  --border-light:   #E5E7EB;  /* default borders */
+  --border-medium:  #D1D5DB;  /* input borders */
+  --border-strong:  #9CA3AF;  /* focused/active borders */
+
+  /* ── Semantic Colors ── */
+  --success:        #16A34A;
+  --success-light:  #F0FDF4;
+  --success-border: #BBF7D0;
+
+  --warning:        #D97706;
+  --warning-light:  #FFFBEB;
+  --warning-border: #FDE68A;
+
+  --danger:         #DC2626;
+  --danger-light:   #FEF2F2;
+  --danger-border:  #FECACA;
+
+  --info:           #0891B2;
+  --info-light:     #ECFEFF;
+  --info-border:    #A5F3FC;
+
+  /* ── Shadows ── */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.08), 
+                0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md:  0 4px 6px rgba(0,0,0,0.07), 
+                0 2px 4px rgba(0,0,0,0.06);
+  --shadow-lg:  0 10px 25px rgba(0,0,0,0.10), 
+                0 4px 10px rgba(0,0,0,0.06);
+  --shadow-modal: 0 20px 60px rgba(0,0,0,0.15),
+                  0 8px 20px rgba(0,0,0,0.10);
+
+  /* ── Radius ── */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  20px;
+}
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Backgrounds */
+  --color-bg-app: var(--bg-app);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-surface-2: var(--bg-surface-2);
+  --color-bg-surface-3: var(--bg-surface-3);
+
+  /* Sidebar */
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-sidebar-hover: var(--bg-sidebar-hover);
+  --color-bg-sidebar-active: var(--bg-sidebar-active);
+  --color-text-sidebar: var(--text-sidebar);
+  --color-text-sidebar-active: var(--text-sidebar-active);
+
+  /* Text */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-placeholder: var(--text-placeholder);
+  --color-text-disabled: var(--text-disabled);
+  --color-text-inverse: var(--text-inverse);
+
+  /* Accent */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-light: var(--accent-light);
+  --color-accent-border: var(--accent-border);
+
+  /* Borders */
+  --color-border-light: var(--border-light);
+  --color-border-medium: var(--border-medium);
+  --color-border-strong: var(--border-strong);
+
+  /* Semantic */
+  --color-success: var(--success);
+  --color-success-light: var(--success-light);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-light: var(--warning-light);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-light: var(--danger-light);
+  --color-danger-border: var(--danger-border);
+  --color-info: var(--info);
+  --color-info-light: var(--info-light);
+  --color-info-border: var(--info-border);
+
+  /* Radius mapping for Tailwind */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  /* Shadow mapping */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-modal: var(--shadow-modal);
+}
+
+@layer base {
+  body {
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+}
+
+/* Custom Scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--bg-surface-2);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Common UI Components */
+.card-main {
+  @apply bg-bg-surface border border-border-light rounded-lg shadow-sm p-5 md:p-6;
+}
+
+.card-inner {
+  @apply bg-bg-surface-2 border border-border-light rounded-md p-3.5 md:p-4;
+}
+
+.btn-primary {
+  @apply bg-accent text-white font-semibold rounded-md px-5 py-2.5 shadow-sm hover:bg-accent-hover transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-secondary {
+  @apply bg-bg-surface text-text-secondary border-[1.5px] border-border-medium font-medium rounded-md px-5 py-2.5 hover:bg-bg-surface-2 hover:border-border-strong transition-all;
+}
+
+.input-field {
+  @apply w-full bg-white border-[1.5px] border-border-medium rounded-md px-3.5 py-2.5 text-sm text-text-primary shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)] placeholder:text-text-placeholder hover:border-border-strong focus:border-2 focus:border-accent focus:ring-0 focus:outline-none focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)] disabled:bg-bg-surface-2 disabled:border-border-light disabled:text-text-disabled disabled:cursor-not-allowed transition-all;
+}
+
+.input-label {
+  @apply text-text-secondary text-[13px] font-semibold mb-1.5 block;
+}
+
+/* Print Styles */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 200ms ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.kb-focused {
+  outline: 3px solid #F97316 !important;
+  outline-offset: 2px !important;
+  border-radius: inherit;
+}
+
+/* Remove default focus outlines 
+from elements that will get kb-focused */
+input.kb-focused:focus,
+textarea.kb-focused:focus,
+button.kb-focused:focus,
+[type="radio"].kb-focused:focus,
+[type="checkbox"].kb-focused:focus {
+  outline: 3px solid #F97316 !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+
+/* Ensure parent doesn't hide outline */
+.modifier-modal-content,
+.modifier-option-row,
+.modifier-group {
+  overflow: visible !important;
+}

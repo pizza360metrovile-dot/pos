@@ -1,0 +1,8 @@
+{
+  "name": "Bistro POS",
+  "description": "Professional Restaurant Management System with robust IndexDB persistence, real-time POS, and comprehensive analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
