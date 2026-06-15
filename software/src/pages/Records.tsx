@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { format, isToday, startOfDay, endOfDay } from 'date-fns';
 import { 
   Truck,
@@ -39,7 +39,8 @@ import { clsx } from 'clsx';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow, isAfter, subHours } from 'date-fns';
-import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDateRange } from '../utils/businessDayCalculation';
+import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDayRange, convertCustomDateRange, getCachedCutoff } from '../utils/businessDayCalculation';
+import { db } from '../lib/db';
 
 const ITEMS_PER_PAGE = 25;
 
@@ -55,7 +56,7 @@ export default function Records() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<OrderType | 'all'>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'completed' | 'held' | 'in-progress' | 'all' | 'deleted'>('completed');
+  const [selectedStatus, setSelectedStatus] = useState<'completed' | 'held' | 'in-progress' | 'all'>('completed');
   const [selectedCashier, setSelectedCashier] = useState<string | 'all'>('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -117,103 +118,120 @@ export default function Records() {
     setCurrentPage(1);
   };
 
-  // Compute calculated date boundaries based on choice
+  // Compute calculated date boundaries for display
   const dateBounds = useMemo(() => {
-    const now = new Date();
-    const nowMs = now.getTime();
-    
-    if (selectedRange === 'today') {
-      const bizToday = getBusinessDate(nowMs);
-      const rangeStart = getBusinessDayStart(bizToday);
-      const rangeEnd = nowMs;
-      return {
-        start: getBusinessDate(rangeStart),
-        end: getBusinessDate(rangeEnd)
-      };
-    }
-    if (selectedRange === 'yesterday') {
-      const bizToday = getBusinessDate(nowMs);
-      const yesterday = new Date(bizToday);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const rangeStart = getBusinessDayStart(yesterday);
-      const rangeEnd = getBusinessDayStart(bizToday) - 1;
-      return {
-        start: getBusinessDate(rangeStart),
-        end: getBusinessDate(rangeEnd)
-      };
-    }
-    if (selectedRange === 'week') {
-      const bizToday = getBusinessDate(nowMs);
-      const currentDay = bizToday.getDay();
-      const gap = currentDay === 0 ? 6 : currentDay - 1;
-      const monday = new Date(bizToday);
-      monday.setDate(bizToday.getDate() - gap);
-      const rangeStart = getBusinessDayStart(monday);
-      const rangeEnd = nowMs;
-      return {
-        start: getBusinessDate(rangeStart),
-        end: getBusinessDate(rangeEnd)
-      };
-    }
-    if (selectedRange === 'month') {
-      const bizToday = getBusinessDate(nowMs);
-      const firstOfMonth = new Date(bizToday.getFullYear(), bizToday.getMonth(), 1);
-      const rangeStart = getBusinessDayStart(firstOfMonth);
-      const rangeEnd = nowMs;
-      return {
-        start: getBusinessDate(rangeStart),
-        end: getBusinessDate(rangeEnd)
-      };
-    }
-    if (selectedRange === 'last-month') {
-      const bizToday = getBusinessDate(nowMs);
-      const firstOfLastMonth = new Date(bizToday.getFullYear(), bizToday.getMonth() - 1, 1);
-      const lastOfLastMonth = new Date(bizToday.getFullYear(), bizToday.getMonth(), 0);
-      const rangeStart = getBusinessDayStart(firstOfLastMonth);
-      const rangeEnd = getBusinessDayEnd(lastOfLastMonth);
-      return {
-        start: getBusinessDate(rangeStart),
-        end: getBusinessDate(rangeEnd)
-      };
+    const cutoff = getCachedCutoff();
+    if (selectedRange === 'all') {
+      return { start: null, end: null };
     }
     if (selectedRange === 'custom') {
-      const start = customStart ? new Date(`${customStart}T00:00:00`) : null;
-      const end = customEnd ? new Date(`${customEnd}T00:00:00`) : null;
-      return { start, end };
+      if (!customStart || !customEnd) {
+        return { start: null, end: null };
+      }
+      const { startDate, endDate } = convertCustomDateRange(customStart, customEnd, cutoff);
+      return { start: startDate, end: endDate };
     }
-    
-    return { start: null, end: null };
+    const { startDate, endDate } = getBusinessDayRange(selectedRange, cutoff);
+    return { start: startDate, end: endDate };
   }, [selectedRange, customStart, customEnd]);
+
+  const [queriedOrders, setQueriedOrders] = useState<Order[]>([]);
+
+  useEffect(() => {
+    const fetchOrders = async () => {
+      let cutoff = '04:00';
+      try {
+        const entry = await db.settings.where({ key: 'businessDayCutoff' }).first();
+        if (entry && entry.value) {
+          cutoff = entry.value;
+        }
+      } catch (err) {
+        console.warn('Failed to read businessDayCutoff from settings:', err);
+      }
+      const [cutoffHour, cutoffMinute] = cutoff.split(':').map(Number);
+      
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
+      
+      if (selectedRange === 'custom') {
+        if (customStart && customEnd) {
+          const range = convertCustomDateRange(customStart, customEnd, cutoff);
+          startDate = range.startDate;
+          endDate = range.endDate;
+        }
+      } else if (selectedRange !== 'all') {
+        const range = getBusinessDayRange(selectedRange, cutoff);
+        startDate = range.startDate;
+        endDate = range.endDate;
+      }
+      
+      let rawOrders: Order[] = [];
+      try {
+        rawOrders = await db.orders.toArray();
+      } catch (err) {
+        console.error('Failed to query orders from Dexie:', err);
+        rawOrders = [...orders];
+      }
+      
+      let filtered = rawOrders;
+      if (startDate && endDate) {
+        filtered = rawOrders.filter(order => {
+          const orderBusDate = order.businessDate 
+            ? new Date(order.businessDate) 
+            : getBusinessDate(order.completedAt || order.createdAt || Date.now());
+          
+          const comparisonTime = new Date(
+            orderBusDate.getFullYear(),
+            orderBusDate.getMonth(),
+            orderBusDate.getDate(),
+            cutoffHour,
+            cutoffMinute,
+            0,
+            0
+          ).getTime();
+          
+          return comparisonTime >= startDate!.getTime() && comparisonTime <= endDate!.getTime();
+        });
+        
+        console.log('Filter:', selectedRange);
+        console.log('Cutoff:', cutoff);
+        console.log('Start:', startDate);
+        console.log('End:', endDate);
+        console.log('Results:', filtered.length);
+      } else {
+        console.log('Filter:', selectedRange);
+        console.log('Cutoff:', cutoff);
+        console.log('Start:', 'All Time');
+        console.log('End:', 'All Time');
+        console.log('Results:', filtered.length);
+      }
+      
+      // Sort by completedAt or createdAt reverse
+      filtered.sort((a, b) => (b.completedAt || b.createdAt || 0) - (a.completedAt || a.createdAt || 0));
+      
+      setQueriedOrders(filtered);
+    };
+    
+    fetchOrders();
+  }, [orders, selectedRange, customStart, customEnd]);
 
   // Keep date-filtered NON-deleted orders for calculations
   const rangeOrders = useMemo(() => {
-    return orders.filter(order => {
-      if (order.isDeleted) return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
-      return true;
-    });
-  }, [orders, dateBounds]);
+    return queriedOrders.filter(order => !order.isDeleted);
+  }, [queriedOrders]);
 
   // Keep date-filtered deleted orders for calculations
   const deletedRangeOrders = useMemo(() => {
-    return orders.filter(order => {
-      if (!order.isDeleted) return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
-      return true;
-    });
-  }, [orders, dateBounds]);
+    return queriedOrders.filter(order => order.isDeleted);
+  }, [queriedOrders]);
 
   const deletedCount = useMemo(() => {
-    return orders.filter(o => o.isDeleted).length;
-  }, [orders]);
+    return queriedOrders.filter(o => o.isDeleted).length;
+  }, [queriedOrders]);
 
   const totalValueDeleted = useMemo(() => {
-    return orders.filter(o => o.isDeleted).reduce((sum, o) => sum + (o.total || 0), 0);
-  }, [orders]);
+    return queriedOrders.filter(o => o.isDeleted).reduce((sum, o) => sum + (o.total || 0), 0);
+  }, [queriedOrders]);
 
   // Calculations derived dynamically from selected range
   const rangeStats = useMemo(() => {
@@ -256,21 +274,8 @@ export default function Records() {
 
   const auditLogStats = useMemo(() => {
     // Filter cancelled and deleted orders within date range
-    const cancelledInPeriod = orders.filter(order => {
-      if (!order.isCancelled) return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
-      return true;
-    });
-
-    const deletedInPeriod = orders.filter(order => {
-      if (!order.isDeleted) return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
-      return true;
-    });
+    const cancelledInPeriod = queriedOrders.filter(order => order.isCancelled);
+    const deletedInPeriod = queriedOrders.filter(order => order.isDeleted);
 
     // Total counts and values
     const cancelledCount = cancelledInPeriod.length;
@@ -280,13 +285,8 @@ export default function Records() {
     const deletedTotalValue = deletedInPeriod.reduce((sum, o) => sum + (o.total || 0), 0);
 
     // Rate calculations: Count divided by total normal completed order count in that range
-    const normalCompletedInPeriodCount = orders.filter(order => {
-      if (order.isDeleted || order.isCancelled) return false;
-      if (order.status !== 'completed') return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
-      return true;
+    const normalCompletedInPeriodCount = queriedOrders.filter(order => {
+      return !order.isDeleted && !order.isCancelled && order.status === 'completed';
     }).length;
 
     const cancelledRate = normalCompletedInPeriodCount > 0 ? (cancelledCount / normalCompletedInPeriodCount) * 100 : 0;
@@ -303,7 +303,7 @@ export default function Records() {
       cancelledRate,
       deletedRate
     };
-  }, [orders, dateBounds]);
+  }, [queriedOrders]);
 
   const toggleRowExpanded = (orderId: string) => {
     setExpandedRowIds(prev => ({
@@ -313,11 +313,8 @@ export default function Records() {
   };
 
   const filteredOrders = useMemo(() => {
-    return orders.filter(order => {
+    return queriedOrders.filter(order => {
       if (order.isCancelled) return false;
-      const orderDate = order.businessDate ? new Date(order.businessDate).getTime() : getBusinessDate(order.completedAt || order.createdAt || Date.now()).getTime();
-      if (dateBounds.start && orderDate < dateBounds.start.getTime()) return false;
-      if (dateBounds.end && orderDate > dateBounds.end.getTime()) return false;
 
       const matchesSearch = 
         order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -329,15 +326,11 @@ export default function Records() {
         (selectedCashier === 'none' && !order.cashierName) ||
         (order.cashierName === selectedCashier);
 
-      if (selectedStatus === 'deleted') {
-        return order.isDeleted && matchesSearch && matchesType && matchesCashier;
-      } else {
-        if (order.isDeleted) return false;
-        const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
-        return matchesSearch && matchesType && matchesStatus && matchesCashier;
-      }
+      if (order.isDeleted) return false;
+      const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
+      return matchesSearch && matchesType && matchesStatus && matchesCashier;
     });
-  }, [orders, searchTerm, selectedType, selectedStatus, selectedCashier, dateBounds]);
+  }, [queriedOrders, searchTerm, selectedType, selectedStatus, selectedCashier]);
 
   const totalPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE);
   const paginatedOrders = useMemo(() => {
@@ -728,7 +721,7 @@ export default function Records() {
             </div>
 
             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light shadow-sm shrink-0">
-              {['all', 'in-progress', 'completed', 'held', 'deleted'].map(status => (
+              {['all', 'in-progress', 'completed', 'held'].map(status => (
                 <button
                   key={status}
                   onClick={() => setSelectedStatus(status as any)}
@@ -738,142 +731,38 @@ export default function Records() {
                   )}
                 >
                   <span>{status}</span>
-                  {status === 'deleted' && deletedCount > 0 && (
-                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-danger text-white rounded-full leading-none">
-                      {deletedCount}
-                    </span>
-                  )}
                 </button>
               ))}
             </div>
           </div>
-        </header>
-
-        <div className="w-full min-h-[60vh] max-w-none p-[20px_24px] bg-bg-surface rounded-lg shadow-sm flex flex-col no-print">
-          {selectedStatus === 'deleted' && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
-              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
-                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">Total Deleted Orders</span>
-                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">{deletedCount}</div>
-              </div>
-              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
-                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">Total Value Deleted</span>
-                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">
-                  {settings.currency}{totalValueDeleted.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div className="bg-danger/5 border border-danger/10 p-5 rounded-xl shadow-sm space-y-1">
-                <span className="text-[10px] text-text-muted uppercase font-bold tracking-widest block">This Period Deletions</span>
-                <div className="text-xl font-extrabold text-danger font-mono tracking-tight">{deletedRangeOrders.length}</div>
-              </div>
-            </div>
-          )}
-
+        </header>        <div className="w-full min-h-[60vh] max-w-none p-[20px_24px] bg-bg-surface rounded-lg shadow-sm flex flex-col no-print">
           <div className="flex-1 overflow-x-auto">
             <table className="w-full min-w-[840px] border-collapse">
-              {selectedStatus === 'deleted' ? (
-                <thead>
-                  <tr>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Order #</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Original Date</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Original Total</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Deleted At</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Deleted By</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '80px', minWidth: '80px' }}>Restore</th>
-                  </tr>
-                </thead>
-              ) : (
-                <thead>
-                  <tr>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '80px', minWidth: '80px' }}>Order #</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Date/Time</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Customer</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Cashier</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Total</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '110px', minWidth: '110px' }}>Status</th>
-                    <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '100px', minWidth: '100px' }}>Actions</th>
-                  </tr>
-                </thead>
-              )}
+              <thead>
+                <tr>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '80px', minWidth: '80px' }}>Order #</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '150px', minWidth: '150px' }}>Date/Time</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '140px', minWidth: '140px' }}>Customer</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '120px', minWidth: '120px' }}>Cashier</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Type</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '60px', minWidth: '60px' }}>Items</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '100px', minWidth: '100px' }}>Total</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-left" style={{ width: '110px', minWidth: '110px' }}>Status</th>
+                  <th className="text-[12px] font-bold text-text-muted uppercase tracking-[0.05em] p-[12px_16px] bg-bg-surface-2 whitespace-nowrap text-right" style={{ width: '100px', minWidth: '100px' }}>Actions</th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-border-light">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={selectedStatus === 'deleted' ? 8 : 9} className="p-12 text-center">
+                    <td colSpan={9} className="p-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3 py-12">
                         <AlertCircle className="w-8 h-8 text-text-placeholder" />
                         <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest">
-                          {selectedStatus === 'deleted' ? 'No deleted orders in this period' : 'No orders in this period'}
+                          No orders in this period
                         </span>
                       </div>
                     </td>
                   </tr>
-                ) : selectedStatus === 'deleted' ? (
-                  paginatedOrders.map(order => (
-                    <tr 
-                      key={order.id} 
-                      onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
-                      className={clsx(
-                        "hover:bg-bg-surface-2 cursor-pointer transition-colors group h-[56px] min-h-[56px] border-b border-border-light text-text-muted opacity-85",
-                        selectedOrder?.id === order.id && "bg-bg-surface-2"
-                      )}
-                    >
-                      <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '120px', minWidth: '120px' }}>
-                        <div className="flex items-center gap-1.5">
-                           <span>{order.orderNumber}</span>
-                           <span className="px-1 py-0.5 text-[8px] bg-danger text-white rounded font-sans uppercase font-black tracking-wider leading-none shrink-0">
-                             DELETED
-                           </span>
-                        </div>
-                      </td>
-                      <td className="p-[14px_16px] text-[14px]" style={{ width: '120px', minWidth: '120px' }}>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-text-primary">{format(order.createdAt, 'HH:mm')}</span>
-                          <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{format(order.createdAt, 'dd MMM yy')}</span>
-                        </div>
-                      </td>
-                      <td className="p-[14px_16px] text-[14px]" style={{ width: '100px', minWidth: '100px' }}>
-                        <span className="badge sm font-bold uppercase tracking-widest">
-                          {order.type}
-                        </span>
-                      </td>
-                      <td className="p-[14px_16px] text-[14px] font-mono font-bold text-text-primary" style={{ width: '60px', minWidth: '60px' }}>
-                        {order.items.reduce((acc, it) => acc + (it.quantity || 0), 0)}
-                      </td>
-                      <td className="p-[14px_16px] text-[14px] font-mono font-bold tracking-tight text-text-primary" style={{ width: '100px', minWidth: '100px' }}>
-                        {settings.currency}{(order.total || 0).toFixed(2)}
-                      </td>
-                      <td className="p-[14px_16px] text-[14px]" style={{ width: '140px', minWidth: '140px' }}>
-                        {order.deletedAt ? (
-                          <div className="flex flex-col text-danger">
-                            <span className="font-bold">{format(order.deletedAt, 'HH:mm')}</span>
-                            <span className="text-[10px] uppercase font-bold tracking-widest mt-0.5">{format(order.deletedAt, 'dd MMM yy')}</span>
-                          </div>
-                        ) : '—'}
-                      </td>
-                      <td className="p-[14px_16px] text-xs truncate max-w-[150px]" title={order.deletedBy || ''}>
-                        {order.deletedBy || '—'}
-                      </td>
-                      <td className="p-[14px_16px] text-right" style={{ width: '80px', minWidth: '80px' }} onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRestoreRecord(order);
-                            }}
-                            className="p-2 bg-success-light border border-success-border rounded-lg text-success hover:bg-success hover:text-white transition-all shadow-sm cursor-pointer pointer-events-auto"
-                            title="Restore order"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
                 ) : (
                   paginatedOrders.map(order => (
                     <tr 

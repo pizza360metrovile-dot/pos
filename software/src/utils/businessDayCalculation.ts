@@ -109,3 +109,104 @@ export function getBusinessDayEnd(date: Date | string | number, cutoff: string =
   d.setHours(hour, minute, 0, 0);
   return d.getTime() - 1;
 }
+
+function parseLocalDate(val: Date | string | number): Date {
+  if (val instanceof Date) return val;
+  if (typeof val === 'number') return new Date(val);
+  if (typeof val === 'string') {
+    if (!val.includes('T')) {
+      return new Date(`${val}T00:00:00`);
+    }
+    return new Date(val);
+  }
+  return new Date(val);
+}
+
+export function getTodayBusinessDay(cutoff: string = cachedCutoff): Date {
+  const now = new Date();
+  const [hour, minute] = cutoff.split(':').map(Number);
+  
+  const todayAtCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+  
+  if (now.getTime() >= todayAtCutoff.getTime()) {
+    return todayAtCutoff;
+  } else {
+    const yesterday = new Date(todayAtCutoff);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday;
+  }
+}
+
+export function getBusinessDayRange(
+  period: 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastMonth' | 'week' | 'month' | 'last-month',
+  cutoff: string = cachedCutoff
+): { startDate: Date; endDate: Date } {
+  const today = getTodayBusinessDay(cutoff);
+  
+  switch (period) {
+    case 'today': {
+      const tomorrow = new Date(today.getTime());
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endDate = new Date(tomorrow.getTime() - 1);
+      return { startDate: today, endDate };
+    }
+    case 'yesterday': {
+      const yesterday = new Date(today.getTime());
+      yesterday.setDate(yesterday.getDate() - 1);
+      const endDate = new Date(today.getTime() - 1);
+      return { startDate: yesterday, endDate };
+    }
+    case 'thisWeek':
+    case 'week': {
+      const currentDay = today.getDay();
+      const gap = currentDay === 0 ? 6 : currentDay - 1;
+      const monday = new Date(today.getTime());
+      monday.setDate(today.getDate() - gap);
+      
+      const tomorrow = new Date(today.getTime());
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endDate = new Date(tomorrow.getTime() - 1);
+      return { startDate: monday, endDate };
+    }
+    case 'thisMonth':
+    case 'month': {
+      const firstOfMonth = new Date(today.getTime());
+      firstOfMonth.setDate(1);
+      
+      const tomorrow = new Date(today.getTime());
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endDate = new Date(tomorrow.getTime() - 1);
+      return { startDate: firstOfMonth, endDate };
+    }
+    case 'lastMonth':
+    case 'last-month': {
+      const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1, today.getHours(), today.getMinutes(), 0, 0);
+      const firstOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1, today.getHours(), today.getMinutes(), 0, 0);
+      const endDate = new Date(firstOfThisMonth.getTime() - 1);
+      return { startDate: lastMonthStart, endDate };
+    }
+    default: {
+      const tomorrow = new Date(today.getTime());
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endDate = new Date(tomorrow.getTime() - 1);
+      return { startDate: today, endDate };
+    }
+  }
+}
+
+export function convertCustomDateRange(
+  fromDate: Date | string | number,
+  toDate: Date | string | number,
+  cutoff: string = cachedCutoff
+): { startDate: Date; endDate: Date } {
+  const [hour, minute] = cutoff.split(':').map(Number);
+  
+  const from = parseLocalDate(fromDate);
+  const startDate = new Date(from.getFullYear(), from.getMonth(), from.getDate(), hour, minute, 0, 0);
+  
+  const to = parseLocalDate(toDate);
+  const nextDay = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1, hour, minute, 0, 0);
+  const endDate = new Date(nextDay.getTime() - 1);
+  
+  return { startDate, endDate };
+}
