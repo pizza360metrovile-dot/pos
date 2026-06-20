@@ -240,6 +240,9 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   deliveryChargeLabel: 'Delivery Charge',
   deliveryChargeTaxable: false,
   autoLogoutTimeout: '8',
+  logoDataURL: '',
+  logoHeightReceipt: 20,
+  logoHeightKOT: 15,
 };
 
 const SEED_CATEGORIES: Category[] = [
@@ -792,12 +795,29 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       const ordersToMigrate = await db.orders.toArray();
       for (const order of ordersToMigrate) {
+        let changed = false;
         if (!order.businessDate) {
           const completedTime = order.completedAt || order.createdAt || Date.now();
-          order.businessDate = getBusinessDate(completedTime);
+          order.businessDate = getBusinessDate(completedTime).getTime();
           if (order.status === 'completed' && !order.completedAt) {
             order.completedAt = completedTime;
           }
+          changed = true;
+        } else if (order.businessDate && typeof order.businessDate === 'object' && typeof order.businessDate.seconds === 'number') {
+          order.businessDate = order.businessDate.seconds * 1000;
+          changed = true;
+        } else if (order.businessDate instanceof Date || (order.businessDate && typeof order.businessDate.getTime === 'function')) {
+          order.businessDate = order.businessDate.getTime();
+          changed = true;
+        } else if (typeof order.businessDate === 'string') {
+          const parsed = new Date(order.businessDate).getTime();
+          if (!isNaN(parsed)) {
+            order.businessDate = parsed;
+            changed = true;
+          }
+        }
+
+        if (changed) {
           await db.orders.put(order);
           get().syncToFirebase('orders', order.id, order);
         }
@@ -805,8 +825,25 @@ export const useStore = create<StoreState>((set, get) => ({
 
       const expensesToMigrate = await db.expenses.toArray();
       for (const expense of expensesToMigrate) {
+        let changed = false;
         if (!expense.businessDate) {
-          expense.businessDate = getBusinessDate(expense.date);
+          expense.businessDate = getBusinessDate(expense.date).getTime();
+          changed = true;
+        } else if (expense.businessDate && typeof expense.businessDate === 'object' && typeof expense.businessDate.seconds === 'number') {
+          expense.businessDate = expense.businessDate.seconds * 1000;
+          changed = true;
+        } else if (expense.businessDate instanceof Date || (expense.businessDate && typeof expense.businessDate.getTime === 'function')) {
+          expense.businessDate = expense.businessDate.getTime();
+          changed = true;
+        } else if (typeof expense.businessDate === 'string') {
+          const parsed = new Date(expense.businessDate).getTime();
+          if (!isNaN(parsed)) {
+            expense.businessDate = parsed;
+            changed = true;
+          }
+        }
+
+        if (changed) {
           await db.expenses.put(expense);
           get().syncToFirebase('expenses', expense.id!, expense);
         }
@@ -1833,7 +1870,7 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!order.completedAt) {
         order.completedAt = Date.now();
       }
-      order.businessDate = getBusinessDate(order.completedAt);
+      order.businessDate = getBusinessDate(order.completedAt).getTime();
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
       await db.orders.add(order);
@@ -1894,7 +1931,7 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!order.completedAt) {
         order.completedAt = Date.now();
       }
-      order.businessDate = getBusinessDate(order.completedAt);
+      order.businessDate = getBusinessDate(order.completedAt).getTime();
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
       await db.orders.put(order);
@@ -2201,7 +2238,7 @@ export const useStore = create<StoreState>((set, get) => ({
         cancellationReason: reason,
         cancelledBy: cashierName || '—',
         completedAt: completedTime,
-        businessDate: getBusinessDate(completedTime)
+        businessDate: getBusinessDate(completedTime).getTime()
       };
 
       await db.transaction('rw', [db.orders], async () => {
@@ -2983,7 +3020,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   addExpense: async (expenseData) => {
-    const businessDate = getBusinessDate(expenseData.date);
+    const businessDate = getBusinessDate(expenseData.date).getTime();
     const finalExpense = { ...expenseData, businessDate };
     const id = await db.expenses.add(finalExpense);
     const added = await db.expenses.get(id);
@@ -2993,7 +3030,7 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
   updateExpense: async (expense) => {
-    const businessDate = getBusinessDate(expense.date);
+    const businessDate = getBusinessDate(expense.date).getTime();
     const updatedExpense = { ...expense, businessDate };
     await db.expenses.put(updatedExpense);
     await get().syncToFirebase('expenses', expense.id!, updatedExpense);

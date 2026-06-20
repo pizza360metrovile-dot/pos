@@ -48,15 +48,59 @@ export const KitchenTicket = React.forwardRef<HTMLDivElement, { order: Order; se
               font-size: 12px !important;
               font-weight: bold !important;
             }
+            .kot-logo {
+              width: auto !important;
+              height: ${settings.logoHeightKOT || 15}mm !important;
+              max-width: 30mm !important;
+              object-fit: contain !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
           }
         `}</style>
         
         {/* HEADER SECTION */}
-        <div style={{ textAlign: 'center', width: '100%' }}>
-          <div className="kot-text-heavy" style={{ fontSize: '15px', fontWeight: 'bold', marginTop: '2px' }}>KOT #{kotNumber}</div>
-          <div className="kot-text-normal" style={{ fontSize: '12px', marginTop: '1px' }}>{settings.name}</div>
-          <div style={{ fontSize: '12px', margin: '4px 0', fontWeight: 'bold' }}>──────────────────────────────</div>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: '4mm',
+          width: '100%'
+        }}>
+          <div style={{ flex: '0 0 auto' }}>
+            {settings.logoDataURL ? (
+              <img 
+                src={settings.logoDataURL}
+                alt="Restaurant Logo"
+                className="kot-logo"
+                style={{
+                  height: `${settings.logoHeightKOT || 15}mm`,
+                  width: 'auto',
+                  maxWidth: '30mm',
+                  objectFit: 'contain'
+                }}
+              />
+            ) : (
+              <div className="kot-text-normal" style={{ fontSize: '12px', fontWeight: 'bold', textAlign: 'left' }}>
+                {settings.name}
+              </div>
+            )}
+          </div>
+          <div style={{ flex: '1 1 auto' }} />
+          <div style={{ 
+            flex: '0 0 auto',
+            textAlign: 'right',
+            fontSize: '14px',
+            fontWeight: 'bold'
+          }} className="kot-text-heavy">
+            KOT #{kotNumber}
+          </div>
         </div>
+
+        <div style={{
+          borderTop: '1px solid #000',
+          margin: '2mm 0'
+        }}></div>
 
         {/* METADATA BLOCK */}
         <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', fontWeight: 'bold' }}>
@@ -383,11 +427,39 @@ export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; 
               text-align: center !important;
               margin: 4px 0 !important;
             }
+            .receipt-logo {
+              width: auto !important;
+              height: ${settings.logoHeightReceipt || 20}mm !important;
+              max-width: 70mm !important;
+              display: block !important;
+              margin: 0 auto 4mm auto !important;
+              object-fit: contain !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
           }
         `}</style>
 
         {/* HEADER BRANDING SUITE */}
         <div style={{ textAlign: 'center', width: '100%' }}>
+          {settings.logoDataURL && (
+            <>
+              <img 
+                src={settings.logoDataURL}
+                alt="Restaurant Logo"
+                className="receipt-logo"
+                style={{
+                  width: 'auto',
+                  height: `${settings.logoHeightReceipt || 20}mm`,
+                  maxWidth: '70mm',
+                  display: 'block',
+                  margin: '0 auto 4mm auto',
+                  objectFit: 'contain'
+                }}
+              />
+              <div style={{ height: '2mm' }} />
+            </>
+          )}
           <div className="receipt-strong-header" style={{ fontWeight: 'bold', fontSize: '16px' }}>{settings.name}</div>
           <div className="receipt-bold-meta" style={{ fontSize: '11px', marginTop: '2px' }}>{settings.address}</div>
           {settings.phone && <div className="receipt-bold-meta" style={{ fontSize: '11px' }}>Phone: {settings.phone}</div>}

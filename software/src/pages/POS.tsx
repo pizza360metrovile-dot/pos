@@ -16,6 +16,7 @@ import { format, formatDistanceToNow, isAfter, subHours } from 'date-fns';
 import { KitchenTicket, CustomerReceipt, DeltaKitchenTicket } from '../components/PrintComponents';
 import ModifierModal from '../components/ModifierModal';
 import DealModal from '../components/DealModal';
+import { getNextKOTNumber } from '../utils/kotNumbering';
 
 export default function POS() {
   const { 
@@ -899,22 +900,7 @@ export default function POS() {
         return;
       }
 
-      let kotNumber: number;
-      if (activeOrder && !isFirstKOT) {
-        // Resend KOT (Update scenario)
-        const lastKOT = await db.kotSnapshots
-          .where('orderId').equals(orderId)
-          .toArray()
-          .then(arr => arr.sort((a, b) => a.kotNumber - b.kotNumber).pop());
-        kotNumber = (lastKOT?.kotNumber || 0) + 1;
-      } else {
-        // Send to Kitchen / KOT NUMBER GENERATION
-        const lastKOT = await db.kotSnapshots
-          .orderBy('kotNumber')
-          .last();
-        const lastNumber = lastKOT?.kotNumber || 0;
-        kotNumber = lastNumber + 1;
-      }
+      const kotNumber = await getNextKOTNumber();
 
       const prevSentAt = lastSnapshot ? lastSnapshot.sentAt : undefined;
       setKotPrintPrevSentAt(prevSentAt);
@@ -1236,7 +1222,7 @@ export default function POS() {
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Customer Name"
+                  placeholder="Customer info"
                   className="w-full bg-bg-surface-2 border border-border-light rounded-md py-2 pl-[42px] pr-3 text-xs text-text-primary placeholder:text-text-placeholder focus:outline-none focus:border-accent transition-all"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}

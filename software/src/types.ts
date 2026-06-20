@@ -144,6 +144,9 @@ export interface RestaurantSettings {
   deliveryChargeTaxable: boolean;
   autoLogoutTimeout: '1' | '4' | '8' | 'never';
   licenseExpiry?: number;
+  logoDataURL?: string;
+  logoHeightReceipt?: number;
+  logoHeightKOT?: number;
 }
 
 export interface Ingredient {

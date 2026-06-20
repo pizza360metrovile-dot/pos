@@ -95,7 +95,15 @@ export default function Expenses() {
       }
 
       // Date Shortcut / Range using businessDate
-      const expBizTime = expense.businessDate ? new Date(expense.businessDate).getTime() : getBusinessDate(expense.date).getTime();
+      let expBizVal = expense.businessDate;
+      if (expBizVal && typeof expBizVal === 'object') {
+        if (typeof expBizVal.seconds === 'number') {
+          expBizVal = expBizVal.seconds * 1000;
+        } else if (expBizVal instanceof Date) {
+          expBizVal = expBizVal.getTime();
+        }
+      }
+      const expBizTime = expBizVal ? new Date(expBizVal).getTime() : getBusinessDate(expense.date).getTime();
       const now = new Date();
       const nowMs = now.getTime();
 

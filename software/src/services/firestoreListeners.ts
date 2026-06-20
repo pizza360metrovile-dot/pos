@@ -18,6 +18,28 @@ function parseId(idStr: string): number | string {
   return idStr;
 }
 
+export function convertTimestampsToMs(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (obj instanceof Date) {
+    return obj.getTime();
+  }
+  if (typeof obj !== 'object') return obj;
+  
+  if (typeof obj.seconds === 'number') {
+    return obj.seconds * 1000;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => convertTimestampsToMs(item));
+  }
+  
+  const output: any = {};
+  for (const key of Object.keys(obj)) {
+    output[key] = convertTimestampsToMs(obj[key]);
+  }
+  return output;
+}
+
 export async function refreshOrdersInStore() {
   const orders = await db.orders.orderBy('createdAt').reverse().toArray();
   useStore.setState({ orders, lastSynced: Date.now() });
@@ -143,7 +165,7 @@ export async function initAllListeners(uid: string) {
             tx.fromFirestore = true;
             for (const change of snapshot.docChanges()) {
               const docId = parseId(change.doc.id);
-              const data = change.doc.data();
+              const data = convertTimestampsToMs(change.doc.data());
 
               if (change.type === 'added' || change.type === 'modified') {
                 if (col.name === 'settings') {

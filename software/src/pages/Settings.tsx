@@ -868,6 +868,263 @@ export default function Settings() {
                 </div>
               </div>
             </div>
+
+            {/* Restaurant Logo configuration */}
+            <div className="md:col-span-2 border-t border-border-light/50 pt-8 mt-4 space-y-6">
+              <div>
+                <h3 className="text-sm font-extrabold uppercase tracking-widest text-text-primary">Restaurant Logo</h3>
+                <p className="text-[11px] text-text-muted mt-1">
+                  Upload your logo to display on printed customer receipts. Max size: 1MB. Recommended format: PNG, WEBP, or JPG.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                <div className="space-y-4">
+                  {/* Logo Preview box */}
+                  <div className="border border-border-light bg-bg-surface-2 rounded-xl p-4 flex flex-col items-center justify-center min-h-[140px] text-center relative overflow-hidden group">
+                    {formData.logoDataURL ? (
+                      <div className="space-y-3 flex flex-col items-center">
+                        <img 
+                          src={formData.logoDataURL} 
+                          alt="Restaurant Logo Preview" 
+                          className="object-contain max-w-[150px] bg-white p-2 rounded-lg border border-border-light shadow-xs"
+                          style={{ height: `${formData.logoHeightReceipt || 20}mm` }}
+                        />
+                        <div className="text-[10px] text-text-secondary font-mono">
+                          Size: {Math.round((formData.logoDataURL.length * 3 / 4) / 1024)} KB
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, logoDataURL: '' }));
+                            toast.success('Logo removed');
+                          }}
+                          className="flex items-center gap-1 text-[10px] text-danger font-bold uppercase tracking-wider bg-danger/10 hover:bg-danger/25 px-2.5 py-1.5 rounded-md transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Remove Logo
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 py-4">
+                        <Upload className="w-8 h-8 text-text-placeholder mx-auto" />
+                        <span className="text-[11px] text-text-placeholder font-bold uppercase tracking-widest block font-sans">No logo uploaded</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* File selector input */}
+                  <div className="flex items-center gap-3">
+                    <label className="flex-1 bg-bg-surface border border-dashed border-border-light hover:border-accent rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-colors group">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-secondary group-hover:text-accent font-sans">
+                        <Upload className="w-4 h-4" />
+                        Upload Logo File
+                      </div>
+                      <span className="text-[10px] text-text-placeholder mt-1 font-medium font-sans">JPEG, PNG, WEBP, or SVG</span>
+                      <input 
+                        type="file" 
+                        accept=".jpg,.jpeg,.png,.webp,.svg,image/jpeg,image/png,image/webp,image/svg+xml" 
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+
+                          const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+                          if (!validTypes.includes(file.type)) {
+                            toast.error('Unsupported file format. Please upload JPG, PNG, WEBP, or SVG.');
+                            return;
+                          }
+
+                          if (file.size > 4 * 1024 * 1024) {
+                            toast.error('File too large (Max 4MB original size before upload).');
+                            return;
+                          }
+
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const originalBase64 = event.target?.result as string;
+
+                            if (file.type === 'image/svg+xml') {
+                              if (originalBase64.length > 400 * 1024) {
+                                toast.error('Logo file too large. Maximum 400KB recommended.');
+                                return;
+                              }
+                              setFormData(prev => ({
+                                ...prev,
+                                logoDataURL: originalBase64
+                              }));
+                              toast.success('Logo uploaded');
+                              return;
+                            }
+
+                            const img = new Image();
+                            img.onload = () => {
+                              if (img.width < 100) {
+                                toast.error('Logo width must be at least 100px.');
+                                return;
+                              }
+                              const ratio = img.width / img.height;
+                              if (ratio < 0.15 || ratio > 6.0) {
+                                toast.error('Extreme aspect ratio. Please use a reasonable logo aspect ratio.');
+                                return;
+                              }
+
+                              const maxWidth = 500;
+                              if (img.width > maxWidth || file.size > 200 * 1024) {
+                                const scale = Math.min(1, maxWidth / img.width);
+                                const canvas = document.createElement('canvas');
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) {
+                                  canvas.width = img.width * scale;
+                                  canvas.height = img.height * scale;
+                                  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                  const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+
+                                  if (compressedBase64.length > 410 * 1024) { // 400KB limit
+                                    toast.error('Logo file too large after compression. Maximum 400KB recommended.');
+                                    return;
+                                  }
+
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    logoDataURL: compressedBase64
+                                  }));
+                                  toast.success('Logo uploaded and compressed');
+                                } else {
+                                  if (originalBase64.length > 410 * 1024) {
+                                    toast.error('Logo file too large. Maximum 400KB recommended.');
+                                    return;
+                                  }
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    logoDataURL: originalBase64
+                                  }));
+                                  toast.success('Logo uploaded');
+                                }
+                              } else {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  logoDataURL: originalBase64
+                                }));
+                                toast.success('Logo uploaded');
+                              }
+                            };
+                            img.onerror = () => {
+                              toast.error('Failed to load image file.');
+                            };
+                            img.src = originalBase64;
+                          };
+                          reader.onerror = () => {
+                            toast.error('Failed to read file.');
+                          };
+                          reader.readAsDataURL(file);
+                        }} 
+                        className="hidden" 
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Sizing Sliders block */}
+                <div className="space-y-6 bg-bg-surface-2 p-6 rounded-xl border border-border-light">
+                  <div>
+                    <h4 className="text-xs font-extrabold uppercase tracking-widest text-text-primary font-sans">Logo Sizing</h4>
+                    <p className="text-[10px] text-text-muted mt-1 leading-relaxed font-sans">
+                      Adjust printed logo heights separately for KOT tickets and Customer Bills.
+                    </p>
+                  </div>
+
+                  {/* SLIDER 1 — KOT Logo Height */}
+                  <div className="space-y-4 pt-4 border-t border-border-light/40">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary font-sans">Logo Height on KOT Slip</span>
+                      <span className="text-xs font-mono font-extrabold text-accent">{formData.logoHeightKOT || 15} mm</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-bold text-text-placeholder font-sans">8mm</span>
+                      <input 
+                        type="range" 
+                        min="8" 
+                        max="30" 
+                        value={formData.logoHeightKOT || 15}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 15);
+                          setFormData(prev => ({ ...prev, logoHeightKOT: val }));
+                        }}
+                        className="flex-1 accent-accent h-1.5 bg-border-light rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-[10px] font-bold text-text-placeholder font-sans">30mm</span>
+                    </div>
+
+                    {/* KOT Preview */}
+                    <div className="p-3 bg-bg-surface border border-border-light rounded-lg">
+                      <div className="text-[9px] font-bold text-text-placeholder uppercase tracking-wider mb-2 font-mono">KOT Preview</div>
+                      <div className="flex gap-4 items-center">
+                        <div className="border border-dashed border-border-light rounded p-2 flex items-center justify-center bg-white" style={{ height: '40px', width: '80px' }}>
+                          {formData.logoDataURL ? (
+                            <img 
+                              src={formData.logoDataURL} 
+                              alt="KOT scale" 
+                              className="object-contain" 
+                              style={{ height: `${(formData.logoHeightKOT || 15) / 2.5}px`, transition: 'height 150ms ease-in-out' }}
+                            />
+                          ) : (
+                            <span className="text-[8px] text-text-placeholder uppercase tracking-widest font-bold font-sans">No logo</span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-text-muted leading-tight font-sans">
+                          This is how it will look on KOT.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SLIDER 2 — Receipt Logo Height */}
+                  <div className="space-y-4 pt-4 border-t border-border-light/40">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary font-sans">Logo Height on Receipt/Bill</span>
+                      <span className="text-xs font-mono font-extrabold text-accent">{formData.logoHeightReceipt || 20} mm</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-bold text-text-placeholder font-sans">10mm</span>
+                      <input 
+                        type="range" 
+                        min="10" 
+                        max="40" 
+                        value={formData.logoHeightReceipt || 20}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setFormData(prev => ({ ...prev, logoHeightReceipt: val }));
+                        }}
+                        className="flex-1 accent-accent h-1.5 bg-border-light rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-[10px] font-bold text-text-placeholder font-sans">40mm</span>
+                    </div>
+
+                    {/* Receipt Preview */}
+                    <div className="p-3 bg-bg-surface border border-border-light rounded-lg">
+                      <div className="text-[9px] font-bold text-text-placeholder uppercase tracking-wider mb-2 font-mono">Receipt Preview</div>
+                      <div className="flex gap-4 items-center">
+                        <div className="border border-dashed border-border-light rounded p-2 flex items-center justify-center bg-white" style={{ height: '50px', width: '80px' }}>
+                          {formData.logoDataURL ? (
+                            <img 
+                              src={formData.logoDataURL} 
+                              alt="Receipt scale" 
+                              className="object-contain" 
+                              style={{ height: `${(formData.logoHeightReceipt || 20) / 2.5}px`, transition: 'height 150ms ease-in-out' }}
+                            />
+                          ) : (
+                            <span className="text-[8px] text-text-placeholder uppercase tracking-widest font-bold font-sans">No logo</span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-text-muted leading-tight font-sans">
+                          This is how it will look on Bill.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <SaveButton sectionId="profile" label="Save Profile" onSave={handleSave} isSaved={!!savedStates['profile']} />
         </section>

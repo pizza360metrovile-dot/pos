@@ -29,10 +29,11 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
-  EyeOff
+  EyeOff,
+  Package
 } from 'lucide-react';
 import { useStore, showConfirmModal } from '../store/useStore';
-import { Order, OrderType, OrderItem } from '../types';
+import { Order, OrderType, OrderItem, MenuItem } from '../types';
 import { PROTECTION_PASSWORD } from '../constants';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
@@ -62,6 +63,33 @@ export default function Records() {
   const [isEditing, setIsEditing] = useState(false);
   const [editValues, setEditValues] = useState<Partial<Order>>({});
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedItemId, setSelectedItemId] = useState<string>('all');
+  const [isItemDropdownOpen, setIsItemDropdownOpen] = useState(false);
+  const [itemSearchTerm, setItemSearchTerm] = useState('');
+
+  // Close dropdown on clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const container = document.getElementById('item-filter-dropdown-container');
+      if (container && !container.contains(event.target as Node)) {
+        setIsItemDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const selectedItem = useMemo(() => {
+    if (selectedItemId === 'all') return null;
+    return menuItems.find(item => String(item.id) === String(selectedItemId)) || null;
+  }, [selectedItemId, menuItems]);
+
+  const dropdownItems = useMemo(() => {
+    const active = menuItems.filter(item => item.isActive || item.isDeal);
+    return [...active].sort((a, b) => a.name.localeCompare(b.name));
+  }, [menuItems]);
   const [retrievalConfirmData, setRetrievalConfirmData] = useState<Order | null>(null);
   const [deletingOrder, setDeletingOrder] = useState<Order | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
@@ -176,8 +204,17 @@ export default function Records() {
       let filtered = rawOrders;
       if (startDate && endDate) {
         filtered = rawOrders.filter(order => {
-          const orderBusDate = order.businessDate 
-            ? new Date(order.businessDate) 
+          let orderBusDateValue = order.businessDate;
+          if (orderBusDateValue && typeof orderBusDateValue === 'object') {
+            if (typeof orderBusDateValue.seconds === 'number') {
+              orderBusDateValue = orderBusDateValue.seconds * 1000;
+            } else if (orderBusDateValue instanceof Date) {
+              orderBusDateValue = orderBusDateValue.getTime();
+            }
+          }
+          
+          const orderBusDate = orderBusDateValue 
+            ? new Date(orderBusDateValue) 
             : getBusinessDate(order.completedAt || order.createdAt || Date.now());
           
           const comparisonTime = new Date(
@@ -215,23 +252,80 @@ export default function Records() {
     fetchOrders();
   }, [orders, selectedRange, customStart, customEnd]);
 
-  // Keep date-filtered NON-deleted orders for calculations
-  const rangeOrders = useMemo(() => {
-    return queriedOrders.filter(order => !order.isDeleted);
+  const orderContainsSelectedItem = (order: Order, selItem: MenuItem) => {
+    return order.items.some(item => {
+      const isIdMatch = String(item.menuItemId) === String(selItem.id);
+      if (selItem.isDeal) {
+        return isIdMatch && !!item.isDeal;
+      } else {
+        return isIdMatch && !item.isDeal;
+      }
+    });
+  };
+
+  // Keep overall completed range orders for overall total revenue (used for item % contribution)
+  const overallCompletedRangeOrders = useMemo(() => {
+    return queriedOrders.filter(o => o.status === 'completed' && !o.isDeleted && !o.isCancelled);
   }, [queriedOrders]);
 
-  // Keep date-filtered deleted orders for calculations
+  const overallTotalRevenue = useMemo(() => {
+    return overallCompletedRangeOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  }, [overallCompletedRangeOrders]);
+
+  // Keep date-filtered NON-deleted orders for calculations (filtered by item if selected)
+  const rangeOrders = useMemo(() => {
+    const nonDeleted = queriedOrders.filter(order => !order.isDeleted);
+    if (selectedItem) {
+      return nonDeleted.filter(order => orderContainsSelectedItem(order, selectedItem));
+    }
+    return nonDeleted;
+  }, [queriedOrders, selectedItem]);
+
+  // Keep date-filtered deleted orders for calculations (filtered by item if selected)
   const deletedRangeOrders = useMemo(() => {
-    return queriedOrders.filter(order => order.isDeleted);
-  }, [queriedOrders]);
+    const deleted = queriedOrders.filter(order => order.isDeleted);
+    if (selectedItem) {
+      return deleted.filter(order => orderContainsSelectedItem(order, selectedItem));
+    }
+    return deleted;
+  }, [queriedOrders, selectedItem]);
 
   const deletedCount = useMemo(() => {
-    return queriedOrders.filter(o => o.isDeleted).length;
-  }, [queriedOrders]);
+    return deletedRangeOrders.length;
+  }, [deletedRangeOrders]);
 
   const totalValueDeleted = useMemo(() => {
-    return queriedOrders.filter(o => o.isDeleted).reduce((sum, o) => sum + (o.total || 0), 0);
-  }, [queriedOrders]);
+    return deletedRangeOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  }, [deletedRangeOrders]);
+
+  // Item-wise stats calculation for the selected item (if any) using unfiltered completed range orders
+  const itemStats = useMemo(() => {
+    if (!selectedItem) return null;
+    
+    let quantitySold = 0;
+    let itemRevenue = 0;
+    
+    overallCompletedRangeOrders.forEach(order => {
+      order.items.forEach(orderItem => {
+        const isIdMatch = String(orderItem.menuItemId) === String(selectedItem.id);
+        const isTypeMatch = selectedItem.isDeal ? !!orderItem.isDeal : !orderItem.isDeal;
+        
+        if (isIdMatch && isTypeMatch) {
+          const modifierPrice = (orderItem.modifiers || []).reduce((sum, mod) => sum + mod.additionalPrice, 0);
+          quantitySold += orderItem.quantity || 0;
+          itemRevenue += (orderItem.price + modifierPrice) * (orderItem.quantity || 0);
+        }
+      });
+    });
+    
+    const percentageOfTotal = overallTotalRevenue > 0 ? (itemRevenue / overallTotalRevenue) * 100 : 0;
+    
+    return {
+      quantitySold,
+      itemRevenue,
+      percentageOfTotal
+    };
+  }, [overallCompletedRangeOrders, selectedItem, overallTotalRevenue]);
 
   // Calculations derived dynamically from selected range
   const rangeStats = useMemo(() => {
@@ -315,6 +409,11 @@ export default function Records() {
   const filteredOrders = useMemo(() => {
     return queriedOrders.filter(order => {
       if (order.isCancelled) return false;
+      if (order.isDeleted) return false;
+
+      if (selectedItem && !orderContainsSelectedItem(order, selectedItem)) {
+        return false;
+      }
 
       const matchesSearch = 
         order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -326,11 +425,10 @@ export default function Records() {
         (selectedCashier === 'none' && !order.cashierName) ||
         (order.cashierName === selectedCashier);
 
-      if (order.isDeleted) return false;
       const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
       return matchesSearch && matchesType && matchesStatus && matchesCashier;
     });
-  }, [queriedOrders, searchTerm, selectedType, selectedStatus, selectedCashier]);
+  }, [queriedOrders, searchTerm, selectedType, selectedStatus, selectedCashier, selectedItem]);
 
   const totalPages = Math.ceil(filteredOrders.length / ITEMS_PER_PAGE);
   const paginatedOrders = useMemo(() => {
@@ -573,6 +671,51 @@ export default function Records() {
             </div>
           </div>
 
+          {selectedItem && (
+            <div className="mb-8 bg-accent/5 border border-accent/20 p-5 rounded-xl shadow-sm">
+              <div className="text-[11px] font-bold text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+                Item-wise Financial Performance: {selectedItem.name} {selectedItem.isDeal ? '(Deal)' : ''}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Card 1: Quantity Sold */}
+                <div className="card-main p-6 border-l-4 border-l-accent bg-bg-surface">
+                  <div className="flex items-center gap-3 mb-2">
+                    <Package className="w-4 h-4 text-accent" />
+                    <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">Quantity Sold</span>
+                  </div>
+                  <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
+                    {itemStats ? itemStats.quantitySold : 0} UNITS
+                  </div>
+                </div>
+
+                {/* Card 2: Item Revenue */}
+                <div className="card-main p-6 border-l-4 border-l-success bg-bg-surface">
+                  <div className="flex items-center gap-3 mb-2">
+                    <TrendingUp className="w-4 h-4 text-success" />
+                    <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">
+                      Revenue from {selectedItem.name}
+                    </span>
+                  </div>
+                  <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
+                    {settings.currency}{itemStats ? itemStats.itemRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                  </div>
+                </div>
+
+                {/* Card 3: % of Total Revenue */}
+                <div className="card-main p-6 border-l-4 border-l-purple-500 bg-bg-surface">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-purple-500 text-sm font-black font-mono leading-none">%</span>
+                    <span className="text-text-muted text-[11px] font-bold uppercase tracking-widest">% of Total Revenue</span>
+                  </div>
+                  <div className="text-2xl font-extrabold text-text-primary font-mono tracking-tighter">
+                    {itemStats ? itemStats.percentageOfTotal.toFixed(1) : '0.0'}%
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Recalculating Stats Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-10">
             {/* Total Revenue */}
@@ -669,7 +812,14 @@ export default function Records() {
           {/* Showing Record Count */}
           <div className="flex items-center mb-4 px-1">
             <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest">
-              Showing {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'}
+              {selectedItem ? (
+                <>
+                  Showing {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'} containing{' '}
+                  <span className="text-accent underline decoration-dotted font-black">{selectedItem.name}</span>
+                </>
+              ) : (
+                `Showing ${filteredOrders.length} ${filteredOrders.length === 1 ? 'order' : 'orders'}`
+              )}
             </span>
           </div>
 
@@ -718,6 +868,83 @@ export default function Records() {
                   ))}
                 </select>
               </div>
+
+              {/* Item Filter Dropdown with Search */}
+              <div className="flex items-center gap-2 relative" id="item-filter-dropdown-container">
+                <span className="text-[10px] font-bold text-text-placeholder uppercase tracking-widest">Item</span>
+                <div className="relative min-w-[200px]">
+                  <button
+                    type="button"
+                    onClick={() => setIsItemDropdownOpen(prev => !prev)}
+                    className="bg-bg-surface-2 border border-border-light text-text-primary px-3 py-2 rounded-lg font-bold text-[11px] uppercase tracking-wider outline-none focus:border-accent cursor-pointer w-full flex items-center justify-between gap-2"
+                  >
+                    <span className="truncate max-w-[150px] text-left">
+                      {selectedItem ? (selectedItem.isDeal ? `${selectedItem.name} (Deal)` : selectedItem.name) : 'All Items'}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 shrink-0 text-text-muted" />
+                  </button>
+                  
+                  {isItemDropdownOpen && (
+                    <div className="absolute right-0 mt-1 w-64 bg-bg-surface border border-border-light rounded-lg shadow-xl z-[50] overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                      <div className="p-2 border-b border-border-light bg-bg-surface-2">
+                        <input
+                          type="text"
+                          placeholder="Search items..."
+                          className="w-full px-2 py-1.5 text-[11px] bg-bg-surface border border-border-light rounded focus:outline-none focus:border-accent font-bold uppercase placeholder-text-placeholder text-text-primary"
+                          value={itemSearchTerm}
+                          onChange={(e) => setItemSearchTerm(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                      <div className="max-h-60 overflow-y-auto py-1 custom-scrollbar">
+                        <button
+                          type="button"
+                          className={clsx(
+                            "w-full text-left px-3 py-2 text-[11px] uppercase font-bold tracking-wider hover:bg-bg-surface-2 transition-colors cursor-pointer flex items-center justify-between",
+                            selectedItemId === 'all' ? "text-accent bg-accent/5 font-extrabold" : "text-text-primary"
+                          )}
+                          onClick={() => {
+                            setSelectedItemId('all');
+                            setIsItemDropdownOpen(false);
+                            setItemSearchTerm('');
+                            setCurrentPage(1);
+                          }}
+                        >
+                          <span>All Items</span>
+                          {selectedItemId === 'all' && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                        
+                        {dropdownItems
+                          .filter(item => item.name.toLowerCase().includes(itemSearchTerm.toLowerCase()))
+                          .map(item => {
+                            const isSelected = String(item.id) === String(selectedItemId);
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className={clsx(
+                                  "w-full text-left px-3 py-2 text-[11px] uppercase font-bold tracking-wider hover:bg-bg-surface-2 transition-colors cursor-pointer flex items-center justify-between whitespace-normal break-words",
+                                  isSelected ? "text-accent bg-accent/5 font-extrabold" : "text-text-primary"
+                                )}
+                                onClick={() => {
+                                  setSelectedItemId(String(item.id));
+                                  setIsItemDropdownOpen(false);
+                                  setItemSearchTerm('');
+                                  setCurrentPage(1);
+                                }}
+                              >
+                                <span className="pr-2 leading-tight text-left">
+                                  {item.name} {item.isDeal ? '(Deal)' : ''}
+                                </span>
+                                {isSelected && <Check className="w-3.5 h-3.5 shrink-0 ml-auto" />}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light shadow-sm shrink-0">
@@ -757,22 +984,28 @@ export default function Records() {
                     <td colSpan={9} className="p-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3 py-12">
                         <AlertCircle className="w-8 h-8 text-text-placeholder" />
-                        <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest">
-                          No orders in this period
+                        <span className="text-text-muted text-xs font-extrabold uppercase tracking-widest max-w-[400px]">
+                          {selectedItem ? (
+                            `No orders found containing ${selectedItem.name} in this period`
+                          ) : (
+                            "No orders in this period"
+                          )}
                         </span>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  paginatedOrders.map(order => (
-                    <tr 
-                      key={order.id} 
-                      onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
-                      className={clsx(
-                        "hover:bg-bg-surface-2 cursor-pointer transition-colors group h-[56px] min-h-[56px] border-b border-border-light",
-                        selectedOrder?.id === order.id && "bg-bg-surface-2"
-                      )}
-                    >
+                  paginatedOrders.map(order => {
+                    const hasItem = selectedItem && orderContainsSelectedItem(order, selectedItem);
+                    return (
+                      <tr 
+                        key={order.id} 
+                        onClick={() => { setSelectedOrder(order); setIsEditing(false); }}
+                        className={clsx(
+                          "hover:bg-bg-surface-2 cursor-pointer transition-all group h-[56px] min-h-[56px] border-b border-border-light",
+                          selectedOrder?.id === order.id ? "bg-bg-surface-2" : hasItem ? "bg-accent/[0.03] border-l-2 border-l-accent" : ""
+                        )}
+                      >
                       <td className="p-[14px_16px] text-[14px] text-text-primary font-mono font-bold" style={{ width: '80px', minWidth: '80px' }}>
                         {order.orderNumber}
                       </td>
@@ -834,8 +1067,9 @@ export default function Records() {
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+                })
+              )}
               </tbody>
             </table>
           </div>
@@ -1049,9 +1283,15 @@ export default function Records() {
                       <div className="space-y-3">
                         {orderSnapshots.map(snap => (
                           <div key={snap.id} className="bg-bg-surface-2/50 border border-border-light rounded-xl overflow-hidden shadow-sm">
-                            <div className="flex items-center justify-between px-4 py-2.5 bg-bg-surface border-b border-border-light">
-                              <span className="badge badge-success sm font-bold tracking-widest uppercase text-[10px]">KOT #{snap.kotNumber}</span>
-                              <span className="text-[10px] text-text-placeholder font-mono uppercase font-bold tracking-widest">{format(snap.sentAt, 'dd MMM HH:mm')}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 px-4 py-2.5 bg-bg-surface border-b border-border-light">
+                              <div className="flex items-center gap-2">
+                                <span className="badge badge-success sm font-bold tracking-widest uppercase text-[10px]">KOT #{snap.kotNumber}</span>
+                                <span className="text-[9px] text-text-placeholder font-medium uppercase tracking-wider">(resets daily)</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-text-placeholder font-mono uppercase font-bold tracking-widest">
+                                <span>Date: {format(snap.sentAt, 'dd MMMM yyyy')}</span>
+                                <span>Time: {format(snap.sentAt, 'hh:mm a')}</span>
+                              </div>
                             </div>
                             <div className="p-3 flex flex-wrap gap-2">
                               {snap.items.map((it, idx) => (
