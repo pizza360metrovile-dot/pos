@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Fira Code", monospace;
+
+  /* Custom colors matching the requested POS theme spec */
+  --color-pos-bg: #F0F2F5;
+  --color-pos-surface: #FFFFFF;
+  --color-pos-surface2: #F7F8FA;
+  --color-pos-primary: #3B82F6;
+  --color-pos-success: #16A34A;
+  --color-pos-warning: #D97706;
+  --color-pos-danger: #DC2626;
+  --color-pos-border: #E5E7EB;
+  --color-pos-dark: #1A1D23;
+
+  --color-pos-text-primary: #111827;
+  --color-pos-text-secondary: #374151;
+  --color-pos-text-muted: #6B7280;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-pos-bg);
+  color: var(--color-pos-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F7F8FA;
+}
+::-webkit-scrollbar-thumb {
+  background: #E5E7EB;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #6B7280;
+}
+
+@utility animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+

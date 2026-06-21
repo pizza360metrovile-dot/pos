@@ -1,0 +1,6 @@
+{
+  "name": "Restaurant Owner Dashboard",
+  "description": "A comprehensive, password-protected read-only management dashboard for restaurant owners, featuring real-time performance analytics, order records, audit logs of deleted KOTs, current inventory status, and dynamic expense tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
