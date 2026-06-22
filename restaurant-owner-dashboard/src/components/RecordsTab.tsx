@@ -3,6 +3,7 @@ import { useStore, calculateDateLimits, toJSDate } from "../store";
 import DateRangeSelector from "./DateRangeSelector";
 import { format } from "date-fns";
 import { Search, Filter, ChevronDown, ChevronUp, User, ShoppingBag, Clock } from "lucide-react";
+import { getRecordsDateRange } from "@/utils/businessDateCalculation";
 
 export default function RecordsTab() {
   const {
@@ -73,41 +74,67 @@ export default function RecordsTab() {
     );
   }
 
-  // Setup date boundary
-  const limits = calculateDateLimits(recordsDateFilter, recordsCustomRange);
+  // Setup date boundary using the business date calculation utility (04:00 AM cutoff)
+  const { startDate, endDate } = getRecordsDateRange(recordsDateFilter, recordsCustomRange);
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
 
   // Dynamic Unique Cashiers List
   const uniqueCashiers = Array.from(
-    new Set(orders.map((o) => o.cashier.trim()).filter(Boolean))
+    new Set(orders.map((o) => (o?.cashier || "").trim()).filter(Boolean))
   );
 
-  // Filter pipeline
+  // Filter pipeline using businessDate with 04:00 AM cutoff
   const filteredOrders = orders.filter((o) => {
-    // Exclude soft-deleted and cancelled (audit logs belong in Tab 3!)
-    if (o.deleted || o.cancelled) return false;
+    // Standardize soft-delete and cancelled flags
+    const oIsDeleted = !!(o?.deleted || o?.isDeleted);
+    const oIsCancelled = !!(o?.cancelled || o?.isCancelled);
 
-    // 1. Date limits
-    const oDate = toJSDate(o.timestamp);
-    if (limits.start && oDate < limits.start) return false;
-    if (limits.end && oDate > limits.end) return false;
+    // Standardize business date value to ms timestamp
+    let oBusinessDateVal = o?.businessDate || o?.timestamp || o?.createdAt || new Date();
+    let oBusinessDateMs = Date.now();
+    if (oBusinessDateVal) {
+      if (typeof oBusinessDateVal.toDate === 'function') {
+        oBusinessDateMs = oBusinessDateVal.toDate().getTime();
+      } else if (oBusinessDateVal.seconds !== undefined) {
+        oBusinessDateMs = oBusinessDateVal.seconds * 1000;
+      } else {
+        const d = new Date(oBusinessDateVal);
+        if (!isNaN(d.getTime())) {
+          oBusinessDateMs = d.getTime();
+        }
+      }
+    }
+
+    // Business date boundary check
+    if (oBusinessDateMs < startMs || oBusinessDateMs > endMs) return false;
+
+    // Exclude soft-deleted and cancelled (audit logs belong in Tab 3!)
+    if (oIsDeleted || oIsCancelled) return false;
 
     // 2. Type filter
-    if (recordsTypeFilter !== "ALL" && o.type !== recordsTypeFilter) return false;
+    if (recordsTypeFilter !== "ALL" && o?.type !== recordsTypeFilter) return false;
 
     // 3. Status filter
-    if (recordsStatusFilter !== "ALL" && o.status !== recordsStatusFilter) return false;
+    if (recordsStatusFilter !== "ALL" && o?.status !== recordsStatusFilter) return false;
 
     // 4. Cashier filter
-    if (recordsCashierFilter !== "ALL" && o.cashier.trim() !== recordsCashierFilter) return false;
+    if (recordsCashierFilter !== "ALL" && (o?.cashier || "").trim() !== recordsCashierFilter) return false;
 
     // 5. Search query (Order number or ID)
     if (recordsSearchQuery.trim()) {
       const q = recordsSearchQuery.toLowerCase();
-      if (!o.orderNo.toLowerCase().includes(q) && !o.id.toLowerCase().includes(q)) return false;
+      const orderNoStr = (o?.orderNo || "").toLowerCase();
+      const idStr = (o?.id || "").toLowerCase();
+      if (!orderNoStr.includes(q) && !idStr.includes(q)) return false;
     }
 
     return true;
   });
+
+  // STEP 6: Debug logs for Records Tab
+  console.log('Orders for display:', filteredOrders);
+  console.log('First order:', orders[0]);
 
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -115,9 +142,31 @@ export default function RecordsTab() {
 
   // Quick helper to fetch and compile detailed items for an order
   const getOrderManifest = (orderId: string) => {
-    const items = orderItems.filter((oi) => oi.orderId === orderId);
+    let items = orderItems.filter((oi) => {
+      const oId = oi.orderId || (oi as any).orderID || (oi as any).order_id;
+      return oId === orderId;
+    });
+
+    if (items.length === 0) {
+      const matchingOrder = orders.find((o) => o.id === orderId);
+      const embedded = (matchingOrder as any)?.items || (matchingOrder as any)?.orderItems || (matchingOrder as any)?.products || [];
+      if (Array.isArray(embedded)) {
+        items = embedded.map((item: any, idx: number) => ({
+          id: item.id || `${orderId}-item-${idx}`,
+          orderId,
+          name: item.name || item.itemName || item.title || "Unknown Item",
+          quantity: Number(item.quantity !== undefined ? item.quantity : (item.qty !== undefined ? item.qty : 1)),
+          price: Number(item.price !== undefined ? item.price : (item.cost !== undefined ? item.cost : 0)),
+          category: item.category || ""
+        }));
+      }
+    }
+
     return items.map((item) => {
-      const modifiers = orderItemModifiers.filter((mod) => mod.orderItemId === item.id);
+      const modifiers = orderItemModifiers.filter((mod) => {
+        const oiId = mod.orderItemId || (mod as any).orderItem_id || (mod as any).orderitem_id;
+        return oiId === item.id;
+      });
       return { ...item, modifiers };
     });
   };
@@ -250,23 +299,23 @@ export default function RecordsTab() {
                   >
                     <div className="space-y-1 text-left">
                       <div className="flex items-center space-x-2">
-                        <span className="font-mono font-bold text-[#111827] text-xs">{order.orderNo}</span>
+                        <span className="font-mono font-bold text-[#111827] text-xs">{order?.orderNo || "N/A"}</span>
                         <span className={`text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-[6px] ${
-                          order.status === "Completed" ? "bg-[#16A34A] text-white" : "bg-[#D97706] text-white"
+                          order?.status === "Completed" ? "bg-[#16A34A] text-white" : "bg-[#D97706] text-white"
                         }`}>
-                          {order.status}
+                          {order?.status || "Incomplete"}
                         </span>
                       </div>
                       <div className="text-[11px] text-[#6B7280] flex items-center space-x-1 font-mono">
                         <Clock className="w-3.5 h-3.5 text-[#6B7280]/70" />
-                        <span>{format(oTime, "h:mm a")} • {order.type}</span>
+                        <span>{format(oTime, "h:mm a")} • {order?.type || "Order"}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center space-x-3">
                       <div className="text-right">
-                        <span className="text-xs font-bold text-[#111827] block">Rs. {order.total}</span>
-                        <span className="text-[10px] text-[#6B7280] block font-medium">{order.cashier.trim()}</span>
+                        <span className="text-xs font-bold text-[#111827] block">Rs. {order?.total || 0}</span>
+                        <span className="text-[10px] text-[#6B7280] block font-medium">{(order?.cashier || "").trim()}</span>
                       </div>
                       {isExpanded ? <ChevronUp className="w-4 h-4 text-[#6B7280]" /> : <ChevronDown className="w-4 h-4 text-[#6B7280]" />}
                     </div>
@@ -335,17 +384,17 @@ export default function RecordsTab() {
                           isExpanded ? "bg-[#3B82F6]/5" : ""
                         }`}
                       >
-                        <td className="py-4 px-5 font-mono font-bold text-[#111827]">{order.orderNo}</td>
+                        <td className="py-4 px-5 font-mono font-bold text-[#111827]">{order?.orderNo || "N/A"}</td>
                         <td className="py-4 px-5 font-mono text-[#6B7280]">{format(oTime, "yyyy-MM-dd HH:mm")}</td>
-                        <td className="py-4 px-5 font-bold uppercase tracking-wider text-[11px] text-[#374151]">{order.type}</td>
+                        <td className="py-4 px-5 font-bold uppercase tracking-wider text-[11px] text-[#374151]">{order?.type || "Order"}</td>
                         <td className="py-4 px-5 font-mono">{itemsCount} units</td>
-                        <td className="py-4 px-5 font-bold text-right text-[#111827] text-xs">Rs. {order.total}</td>
-                        <td className="py-4 px-5 font-medium">{order.cashier}</td>
+                        <td className="py-4 px-5 font-bold text-right text-[#111827] text-xs">Rs. {order?.total || 0}</td>
+                        <td className="py-4 px-5 font-medium">{order?.cashier || "N/A"}</td>
                         <td className="py-4 px-5 text-center">
                           <span className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-[6px] ${
-                            order.status === "Completed" ? "bg-[#16A34A] text-white" : "bg-[#D97706] text-white"
+                            order?.status === "Completed" ? "bg-[#16A34A] text-white" : "bg-[#D97706] text-white"
                           }`}>
-                            {order.status}
+                            {order?.status || "Incomplete"}
                           </span>
                         </td>
                         <td className="py-4 px-5 text-right font-mono">
@@ -391,7 +440,7 @@ export default function RecordsTab() {
                                 <div className="space-y-3">
                                   <div className="flex items-center space-x-2.5 text-xs text-[#6B7280] border-b border-[#E5E7EB] pb-2.5">
                                     <User className="w-3.5 h-3.5 text-[#3B82F6] shrink-0" />
-                                    <span>Authorized Cashier Agent: <strong className="text-[#111827] font-bold">{order.cashier}</strong></span>
+                                    <span>Authorized Cashier Agent: <strong className="text-[#111827] font-bold">{order?.cashier || "N/A"}</strong></span>
                                   </div>
                                   
                                   <InvoiceSummary blockId={`rec-desktop-invoice-${order.id}`} order={order} />
@@ -415,11 +464,12 @@ export default function RecordsTab() {
 
 // Invoice Summary layout component to avoid repeating Code
 function InvoiceSummary({ blockId, order }: { blockId: string; order: any }) {
-  const discountVal = order.discount || 0;
-  const taxVal = order.tax || 0;
-  const deliveryVal = order.deliveryCharge || 0;
+  const totalVal = order?.total || 0;
+  const discountVal = order?.discount || 0;
+  const taxVal = order?.tax || 0;
+  const deliveryVal = order?.deliveryCharge || 0;
   // Subtotal = total - tax - delivery + discount
-  const calculatedSubtotal = parseFloat((order.total - taxVal - deliveryVal + discountVal).toFixed(2));
+  const calculatedSubtotal = parseFloat((totalVal - taxVal - deliveryVal + discountVal).toFixed(2));
 
   return (
     <div id={blockId} className="space-y-2 text-xs text-[#374151]">
@@ -440,16 +490,14 @@ function InvoiceSummary({ blockId, order }: { blockId: string; order: any }) {
         <span className="font-mono">Rs. {taxVal.toFixed(2)}</span>
       </div>
 
-      {deliveryVal > 0 && (
-        <div className="flex justify-between text-[#6B7280]">
-          <span className="uppercase tracking-wider text-[10px]">Delivery Charge</span>
-          <span className="font-mono">Rs. {deliveryVal.toFixed(2)}</span>
-        </div>
-      )}
+      <div className="flex justify-between text-[#6B7280]">
+        <span className="uppercase tracking-wider text-[10px]">Delivery Charge</span>
+        <span className="font-mono">Rs. {deliveryVal.toFixed(2)}</span>
+      </div>
 
       <div className="flex justify-between text-[#111827] font-bold border-t border-[#E5E7EB] pt-2 text-xs mt-1">
         <span className="uppercase tracking-wider">Net Order Total</span>
-        <span className="font-mono font-bold text-sm text-[#111827]">Rs. {order.total}</span>
+        <span className="font-mono font-bold text-sm text-[#111827]">Rs. {totalVal}</span>
       </div>
     </div>
   );

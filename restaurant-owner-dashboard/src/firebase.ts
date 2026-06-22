@@ -1,16 +1,14 @@
 import { initializeApp, getApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-const metaEnv = (import.meta as any).env || {};
-
-// Get optional configuration from VITE_ environment variables
+// Get configuration from VITE_ environment variables
 const firebaseConfig = {
-  apiKey: metaEnv.VITE_FIREBASE_API_KEY,
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: metaEnv.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 // Check if we have at least apiKey and projectId to initialize firebase
@@ -25,15 +23,19 @@ let app;
 let db: any = null;
 let isDemoMode = true;
 
+// Force isDemoMode = false if projectId is actively matching our environment keys, cutting off local mock generation rules entirely
+if (firebaseConfig.projectId && firebaseConfig.projectId !== "YOUR_PROJECT_ID" && firebaseConfig.projectId.trim() !== "") {
+  isDemoMode = false;
+}
+
 if (isValidConfig) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
-    isDemoMode = false;
     console.log("Firebase initialized successfully in Production Mode using project: " + firebaseConfig.projectId);
   } catch (error) {
-    console.error("Firebase initialization failed, falling back to Demo Mode:", error);
-    isDemoMode = true;
+    console.error("Firebase initialization failed:", error);
+    // Even if there is an initialization issue, do not set isDemoMode to true if keys are active
   }
 } else {
   console.log("No valid Firebase configuration found or placeholder detected. Running in Demo Mode (Local state with real-time simulator).");
@@ -41,5 +43,5 @@ if (isValidConfig) {
 }
 
 export { db, isDemoMode };
-export const DEFAULT_RESTAURANT_ID = metaEnv.VITE_REST_ID || "pizza-metro-360";
+export const DEFAULT_RESTAURANT_ID = import.meta.env.VITE_REST_ID || "operator-1";
 

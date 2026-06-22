@@ -13,7 +13,7 @@ import {
   ShoppingBag, Trash2, TrendingUp, DollarSign, HelpCircle, Activity 
 } from "lucide-react";
 
-export default function App() {
+function App() {
   const {
     isAuthenticated,
     sessionToken,
@@ -28,12 +28,24 @@ export default function App() {
     ingredients,
     expenses,
     restaurantId,
-    setRestaurantId,
-    firestoreDiagnostics
+    setRestaurantId
   } = useStore();
 
   const [simMessage, setSimMessage] = useState<string | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // 0. Determine dynamic restaurant ID on mount from localStorage or URL
+  useEffect(() => {
+    try {
+      const storedUid = localStorage.getItem('activeRestaurantUID') || localStorage.getItem('target_restaurant_uid') || localStorage.getItem('restaurant_id') || localStorage.getItem('restaurant_uid');
+      if (storedUid && storedUid.trim()) {
+        setRestaurantId(storedUid.trim());
+      } else {
+        setRestaurantId("operator-1");
+      }
+    } catch (e) {
+      console.error("Failed to initialize restaurant ID on startup:", e);
+    }
+  }, [setRestaurantId]);
 
   // 1. Core listener to initialize database listeners OR simulator fallback
   useEffect(() => {
@@ -125,6 +137,7 @@ export default function App() {
             </div>
             <div>
               <span className="text-[18px] font-bold text-[#111827] tracking-tight block">Pizza360 Metrovile</span>
+              <span className="text-[10px] text-[#6B7280] font-mono block mt-0.5">[Connected ID: {restaurantId}]</span>
             </div>
           </div>
 
@@ -196,103 +209,6 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 2.5 REAL-TIME DB CONTEXT & DIAGNOSTICS CONTROL PANEL */}
-      <div className="bg-white border-b border-[#E5E7EB] px-6 py-3">
-        <div className="max-w-[1400px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Active Restaurant Target Context:</span>
-            <div className="flex items-center space-x-1.5 bg-[#F7F8FA] border border-[#E5E7EB] rounded-[8px] p-1.5 shadow-2xs">
-              <input
-                id="restaurant-uid-input"
-                type="text"
-                value={restaurantId}
-                onChange={(e) => setRestaurantId(e.target.value)}
-                placeholder="Enter Restaurant UID..."
-                className="bg-white rounded-[6px] px-3 py-1 text-xs text-[#111827] w-56 font-mono font-semibold border border-[#E5E7EB] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-[#3B82F6] transition-all"
-                title="Input POS restaurant UID to sync metrics dynamically"
-              />
-              <span className="text-[10px] text-[#6B7280] font-mono font-semibold pr-2 hidden sm:inline border-l border-[#E5E7EB] pl-2">
-                restaurants/{restaurantId}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2.5 shrink-0 self-end md:self-auto">
-            <button
-              id="toggle-diagnostics-btn"
-              onClick={() => setShowDiagnostics(!showDiagnostics)}
-              className="text-xs font-semibold text-[#3B82F6] bg-blue-50/65 hover:bg-blue-100/80 transition-colors border border-blue-200/50 rounded-[8px] px-3.5 py-2 flex items-center space-x-2 cursor-pointer shadow-2xs"
-            >
-              <Activity className="w-3.5 h-3.5 text-[#3B82F6]" />
-              <span>{showDiagnostics ? "Hide Sync Diagnostics" : "Monitor Streams & Errors"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Expandable status grid showing active collections stream diagnostic */}
-        {showDiagnostics && (
-          <div className="max-w-[1400px] mx-auto mt-3.5 p-4 border border-[#E5E7EB] rounded-xl bg-[#F7F8FA] animate-fade-in space-y-3.5 shadow-2xs text-left">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#E5E7EB] pb-2 gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#374151] flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-[#3B82F6] animate-pulse"></span>
-                <span>Active Firestore Snapshot Subscriptions</span>
-              </h3>
-              <span className="text-[10px] font-mono text-[#6B7280] bg-white border border-[#E5E7EB] px-2 py-0.5 rounded-[4px]">
-                restaurants/{restaurantId}/[collection]
-              </span>
-            </div>
-
-            {isDemoMode ? (
-              <p className="text-xs text-[#D97706] font-medium bg-amber-50 border border-amber-200/60 p-3 rounded-[8px]">
-                ⚠️ Running in <strong>Local Simulated Mode</strong>. To sync with a live Firestore database, configure your environment with the correct <code>VITE_FIREBASE_...</code> keys in your secrets manager.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {Object.values(firestoreDiagnostics).length === 0 ? (
-                  <p className="text-xs text-[#6B7280] italic col-span-full py-2">Waiting for Firestore listeners to initialize...</p>
-                ) : (
-                  Object.values(firestoreDiagnostics).map((diag) => {
-                    const statusColors = {
-                      loading: 'bg-amber-50 text-amber-800 border-amber-200/60',
-                      active: 'bg-emerald-50 text-emerald-800 border-emerald-200/60',
-                      empty: 'bg-blue-50 text-blue-800 border-blue-200/60',
-                      error: 'bg-rose-50 text-rose-800 border-rose-200/60'
-                    };
-                    return (
-                      <div key={diag.collection} className="bg-white p-3 border border-[#E5E7EB] rounded-lg shadow-3xs flex flex-col justify-between space-y-2">
-                        <div className="flex justify-between items-start">
-                          <span className="font-mono text-[11px] font-bold text-[#111827]">{diag.collection}</span>
-                          <span className={`text-[9px] px-1.5 py-0.5 font-bold uppercase rounded-[4px] border ${statusColors[diag.status] || ''}`}>
-                            {diag.status}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-[#6B7280] space-y-1.5">
-                          <div className="flex justify-between">
-                            <span>Documents cached:</span>
-                            <span className="font-mono font-bold text-[#111827]">{diag.docCount}</span>
-                          </div>
-                          {diag.lastUpdated && (
-                            <div className="flex justify-between text-[9px] text-gray-400">
-                              <span>Refreshed:</span>
-                              <span className="font-mono">{diag.lastUpdated}</span>
-                            </div>
-                          )}
-                          {diag.errorMsg && (
-                            <div className="text-[9px] text-red-600 bg-red-50 border border-red-100 p-2 rounded-md mt-1.5 break-words font-mono">
-                              <strong>Diagnostic Error:</strong> {diag.errorMsg}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* 3. SIMULATION DIAGNOSTIC CONTROLLER */}
       {isDemoMode && (
         <div className="bg-[#1A1D23] text-white py-2.5 px-6 border-b border-[#111827] text-center">
@@ -336,3 +252,6 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
+

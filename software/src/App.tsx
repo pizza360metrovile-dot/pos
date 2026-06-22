@@ -37,6 +37,7 @@ import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
+import { migrateBusinessDates } from './migrations/fixBusinessDates';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -440,6 +441,24 @@ export default function App() {
       stopKillSwitchListeners();
     };
   }, [user]);
+
+  const restaurantUID = user?.uid;
+
+  // After restaurant UID is set
+  useEffect(() => {
+    const runMigration = async () => {
+      try {
+        const result = await migrateBusinessDates();
+        console.log('Migration result:', result);
+      } catch (error) {
+        console.error('Migration error:', error);
+      }
+    };
+    
+    if (restaurantUID) {
+      runMigration();
+    }
+  }, [restaurantUID]);
 
   // Escape key listener
   useEffect(() => {

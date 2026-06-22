@@ -21,6 +21,29 @@ export default function PerformanceTab() {
 
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
 
+  // Parse Date Limits
+  const limits = calculateDateLimits(performanceDateFilter, performanceCustomRange);
+
+  React.useEffect(() => {
+    console.log('=== PERFORMANCE DEBUG ===')
+    console.log('All orders:', orders)
+    console.log('Orders count:', orders?.length)
+    
+    const completed = orders?.filter(
+      o => o.status === 'Completed'
+    )
+    console.log('Completed orders in any date range:', completed)
+    console.log('Completed count:', completed?.length)
+    
+    const totalRev = completed?.reduce(
+      (sum, o) => sum + (o.total || 0), 0
+    ) || 0
+    console.log('Total revenue calc:', totalRev)
+    
+    console.log('Date range filter:', performanceDateFilter)
+    console.log('Limits:', limits)
+  }, [orders, performanceDateFilter, limits]);
+
   // loading skeleton
   if (connectionStatus === "connecting") {
     return (
@@ -66,9 +89,6 @@ export default function PerformanceTab() {
     );
   }
 
-  // Parse Date Limits
-  const limits = calculateDateLimits(performanceDateFilter, performanceCustomRange);
-
   // Filter completed, non-canceled, non-deleted orders in date range
   const activeOrders = orders.filter(o => {
     if (o.deleted || o.cancelled) return false;
@@ -98,11 +118,30 @@ export default function PerformanceTab() {
 
   // Compute Top Selling Item of completed orders
   const completedOrderIds = new Set(completedOrders.map(o => o.id));
-  const activeItems = orderItems.filter(oi => completedOrderIds.has(oi.orderId));
+  const activeItems = orderItems.filter(oi => {
+    const oId = oi.orderId || (oi as any).orderID || (oi as any).order_id;
+    return oId && completedOrderIds.has(oId);
+  });
   
   const salesQtyMap: { [name: string]: number } = {};
+  
+  // 1. Accumulate from dedicated Order Items collection
   activeItems.forEach(item => {
-    salesQtyMap[item.name] = (salesQtyMap[item.name] || 0) + item.quantity;
+    const name = item.name || (item as any).itemName || (item as any).title || "Unknown Item";
+    const qty = Number(item.quantity !== undefined ? item.quantity : 1);
+    salesQtyMap[name] = (salesQtyMap[name] || 0) + qty;
+  });
+
+  // 2. Fallback: Accumulate from nested items inside the completed orders themselves
+  completedOrders.forEach(order => {
+    const nested = (order as any).items || (order as any).orderItems || (order as any).products;
+    if (Array.isArray(nested)) {
+      nested.forEach((item: any) => {
+        const name = item.name || item.itemName || item.title || "Unknown Item";
+        const qty = Number(item.quantity !== undefined ? item.quantity : (item.qty !== undefined ? item.qty : 1));
+        salesQtyMap[name] = (salesQtyMap[name] || 0) + qty;
+      });
+    }
   });
 
   let topItemName = "N/A";
@@ -113,6 +152,12 @@ export default function PerformanceTab() {
       topItemQty = qty;
     }
   });
+
+  // STEP 6: Debug logs for Performance Tab
+  console.log('All orders:', orders);
+  console.log('Completed orders:', completedOrders);
+  console.log('Total revenue:', totalRevenue);
+  console.log('Top item:', topItemName);
 
   // Check if any completions logged in overall database, to check if really empty
   const hasOrdersInSystem = orders.length > 0;
@@ -312,7 +357,7 @@ export default function PerformanceTab() {
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[#111827]">Daily Net Sales Revenue</h3>
                 <span className="text-[10px] text-[#6B7280] font-mono">CHRONOLOGICAL VALUE</span>
               </div>
-              <div className="h-64">
+              <div className="h-[350px] w-full min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={histogramData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -334,7 +379,7 @@ export default function PerformanceTab() {
                 <h3 className="text-xs font-bold uppercase tracking-wider text-[#111827]">Daily Guest Tickets Logged</h3>
                 <span className="text-[10px] text-[#6B7280] font-mono">TICKET DENSITY</span>
               </div>
-              <div className="h-64">
+              <div className="h-[350px] w-full min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={histogramData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -366,7 +411,7 @@ export default function PerformanceTab() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                  <div className="h-52 flex justify-center">
+                  <div className="h-[208px] w-full min-w-0 flex justify-center">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie

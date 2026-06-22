@@ -18,6 +18,10 @@ export interface Order {
   cancelledAt?: any;
   cancelledReason?: string;
   cancelledBy?: string;
+  businessDate?: any;
+  createdAt?: any;
+  isDeleted?: boolean;
+  isCancelled?: boolean;
 }
 
 export interface OrderItem {

@@ -796,14 +796,9 @@ export const useStore = create<StoreState>((set, get) => ({
       const ordersToMigrate = await db.orders.toArray();
       for (const order of ordersToMigrate) {
         let changed = false;
-        if (!order.businessDate) {
-          const completedTime = order.completedAt || order.createdAt || Date.now();
-          order.businessDate = getBusinessDate(completedTime).getTime();
-          if (order.status === 'completed' && !order.completedAt) {
-            order.completedAt = completedTime;
-          }
-          changed = true;
-        } else if (order.businessDate && typeof order.businessDate === 'object' && typeof order.businessDate.seconds === 'number') {
+
+        // Ensure businessDate is convert to ms first if stored as other types
+        if (order.businessDate && typeof order.businessDate === 'object' && typeof order.businessDate.seconds === 'number') {
           order.businessDate = order.businessDate.seconds * 1000;
           changed = true;
         } else if (order.businessDate instanceof Date || (order.businessDate && typeof order.businessDate.getTime === 'function')) {
@@ -817,6 +812,17 @@ export const useStore = create<StoreState>((set, get) => ({
           }
         }
 
+        const completedTime = order.completedAt || order.createdAt || Date.now();
+        const correctBusDate = getBusinessDate(completedTime).getTime();
+
+        if (order.businessDate !== correctBusDate) {
+          order.businessDate = correctBusDate;
+          if (order.status === 'completed' && !order.completedAt) {
+            order.completedAt = completedTime;
+          }
+          changed = true;
+        }
+
         if (changed) {
           await db.orders.put(order);
           get().syncToFirebase('orders', order.id, order);
@@ -826,10 +832,8 @@ export const useStore = create<StoreState>((set, get) => ({
       const expensesToMigrate = await db.expenses.toArray();
       for (const expense of expensesToMigrate) {
         let changed = false;
-        if (!expense.businessDate) {
-          expense.businessDate = getBusinessDate(expense.date).getTime();
-          changed = true;
-        } else if (expense.businessDate && typeof expense.businessDate === 'object' && typeof expense.businessDate.seconds === 'number') {
+
+        if (expense.businessDate && typeof expense.businessDate === 'object' && typeof expense.businessDate.seconds === 'number') {
           expense.businessDate = expense.businessDate.seconds * 1000;
           changed = true;
         } else if (expense.businessDate instanceof Date || (expense.businessDate && typeof expense.businessDate.getTime === 'function')) {
@@ -841,6 +845,13 @@ export const useStore = create<StoreState>((set, get) => ({
             expense.businessDate = parsed;
             changed = true;
           }
+        }
+
+        const correctBusDate = getBusinessDate(expense.date).getTime();
+
+        if (expense.businessDate !== correctBusDate) {
+          expense.businessDate = correctBusDate;
+          changed = true;
         }
 
         if (changed) {

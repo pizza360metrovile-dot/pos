@@ -109,6 +109,10 @@ export default function InventoryTab() {
   const filteredStocked = processInventoryList(stockedItems);
   const filteredIngredients = processInventoryList(ingredientStock);
 
+  // STEP 6: Debug logs for Inventory Tab
+  console.log('All ingredients:', ingredients);
+  console.log('Ingredients count:', ingredients.length);
+
   return (
     <div className="space-y-[24px] animate-fade-in">
       {/* 1. TOP URGENT ALERTS BANNER */}

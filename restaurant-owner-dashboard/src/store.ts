@@ -19,6 +19,7 @@ export function getInitialRestaurantId(): string {
     const urlId = params.get('uid') || params.get('restaurantId') || params.get('restaurant_id') || params.get('restaurantUid') || params.get('restaurant_uid');
     if (urlId && urlId.trim()) {
       const cleaned = urlId.trim();
+      localStorage.setItem('activeRestaurantUID', cleaned);
       localStorage.setItem('target_restaurant_uid', cleaned);
       return cleaned;
     }
@@ -27,7 +28,7 @@ export function getInitialRestaurantId(): string {
   }
 
   try {
-    const localId = localStorage.getItem('target_restaurant_uid') || localStorage.getItem('restaurant_id') || localStorage.getItem('restaurant_uid');
+    const localId = localStorage.getItem('activeRestaurantUID') || localStorage.getItem('target_restaurant_uid') || localStorage.getItem('restaurant_id') || localStorage.getItem('restaurant_uid');
     if (localId && localId.trim()) {
       return localId.trim();
     }
@@ -35,8 +36,9 @@ export function getInitialRestaurantId(): string {
     console.error("Failed to parse localStorage restaurantId: ", e);
   }
 
-  const fallback = DEFAULT_RESTAURANT_ID;
+  const fallback = "operator-1";
   try {
+    localStorage.setItem('activeRestaurantUID', fallback);
     localStorage.setItem('target_restaurant_uid', fallback);
   } catch (e) {}
   return fallback;
@@ -50,6 +52,9 @@ export function toJSDate(timestamp: any): Date {
   }
   if (timestamp.seconds !== undefined) {
     return new Date(timestamp.seconds * 1000);
+  }
+  if (typeof timestamp === 'number') {
+    return new Date(timestamp);
   }
   if (typeof timestamp === 'string') {
     return new Date(timestamp);
@@ -168,6 +173,7 @@ export const useStore = create<DashboardState>((set, get) => ({
 
   setRestaurantId: (id: string) => {
     const cleaned = id.trim();
+    localStorage.setItem('activeRestaurantUID', cleaned);
     localStorage.setItem('target_restaurant_uid', cleaned);
     set({ restaurantId: cleaned });
     console.log("Updated active Restaurant UID to:", cleaned);
@@ -290,7 +296,6 @@ export const useStore = create<DashboardState>((set, get) => ({
       return () => {};
     }
 
-    const { restaurantId } = get();
     set({ connectionStatus: 'connecting' });
     const unsubscribes: (() => void)[] = [];
 
@@ -300,91 +305,326 @@ export const useStore = create<DashboardState>((set, get) => ({
       get().updateDiagnostic(c, 'loading', undefined, 0);
     });
 
-    console.log(`Starting real-time subscription for restaurant ID: "${restaurantId}"`);
+    const finalId = get().restaurantId || localStorage.getItem('activeRestaurantUID') || "operator-1";
 
     try {
+      console.log(`Starting real-time subscription for restaurant ID: "${finalId}"`);
+
+      // Closure-scoped trackers to combine separate collection orderItems with inline order items
+      let fetchedItems: OrderItem[] = [];
+      let inlineItemsList: OrderItem[] = [];
+
+      const updateAndMergeOrderItems = () => {
+        const itemMap = new Map<string, OrderItem>();
+        
+        // Add inline extracted items first
+        inlineItemsList.forEach(item => {
+          itemMap.set(item.id, item);
+        });
+        
+        // Overwrite/add fetched sub-collection items
+        fetchedItems.forEach(item => {
+          itemMap.set(item.id, item);
+        });
+        
+        const mergedList = Array.from(itemMap.values());
+        set({ orderItems: mergedList });
+        get().updateDiagnostic('orderItems', mergedList.length === 0 ? 'empty' : 'active', undefined, mergedList.length);
+      };
+
       // 1. orders
-      const ordersRef = collection(db, 'restaurants', restaurantId, 'orders');
+      const ordersRef = collection(db, 'restaurants', finalId, 'orders');
       const unsubOrders = onSnapshot(ordersRef, (snapshot) => {
-        const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Order[];
-        set({ orders: ordersData, connectionStatus: 'connected' });
-        get().updateDiagnostic('orders', ordersData.length === 0 ? 'empty' : 'active', undefined, ordersData.length);
+        try {
+          const currentInlineItems: OrderItem[] = [];
+          const ordersData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              const id = doc.id;
+              
+              // Standardizing fields from potential alternative keys (aliases)
+              const orderNo = data.orderNo || data.orderNumber || data.order_no || data.order_number || data.orderID || data.id || data._id || `#${id.slice(-4)}`;
+              const timestamp = data.timestamp || data.createdAt || data.completedAt || data.completedTime || data.businessDate || data.date || new Date();
+              const rawStatus = (data.status || data.orderStatus || data.order_status || data.state || 'In-Progress').trim();
+              const statusNormalized = (rawStatus.toLowerCase() === 'completed') ? 'Completed' : 'In-Progress';
+              const total = Number(data.total !== undefined ? data.total : (data.totalAmount !== undefined ? data.totalAmount : (data.grandTotal !== undefined ? data.grandTotal : (data.amount !== undefined ? data.amount : 0))));
+              const cashier = data.cashier || 'System';
+              const deleted = !!(data.deleted || data.isDeleted || data.is_deleted);
+              const cancelled = !!(data.cancelled || data.isCancelled || data.is_cancelled || data.state?.toLowerCase() === 'cancelled' || rawStatus.toLowerCase() === 'cancelled');
+
+              // If order contains inline items, parse and accumulate them
+              const inlineItems = data.items || data.orderItems || data.products;
+              if (Array.isArray(inlineItems)) {
+                inlineItems.forEach((item: any, idx: number) => {
+                  currentInlineItems.push({
+                    id: item.id || `${id}-item-${idx}`,
+                    orderId: id,
+                    name: item.name || item.itemName || item.title || "Unknown Item",
+                    quantity: Number(item.quantity !== undefined ? item.quantity : (item.qty !== undefined ? item.qty : 1)),
+                    price: Number(item.price !== undefined ? item.price : (item.cost !== undefined ? item.cost : 0)),
+                    category: item.category || ""
+                  });
+                });
+              }
+
+              return {
+                ...data,
+                id,
+                orderNo,
+                timestamp,
+                status: statusNormalized,
+                total,
+                cashier,
+                deleted,
+                cancelled
+              } as Order;
+            } catch (innerErr) {
+              console.error(`Failed parsing order document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is Order => doc !== null);
+
+          inlineItemsList = currentInlineItems;
+          set({ orders: ordersData, connectionStatus: 'connected' });
+          get().updateDiagnostic('orders', ordersData.length === 0 ? 'empty' : 'active', undefined, ordersData.length);
+          
+          // Re-trigger the Order Items merging
+          updateAndMergeOrderItems();
+        } catch (mapErr: any) {
+          console.error("Orders mapping/state reduction failed safely:", mapErr);
+          set({ orders: [], connectionStatus: 'connected' });
+        }
       }, (err) => {
-        console.error("Orders listener error", err);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/orders`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
         set({ connectionStatus: 'offline' });
-        get().updateDiagnostic('orders', 'error', err.message, 0);
+        get().updateDiagnostic('orders', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubOrders);
 
       // 2. orderItems
-      const itemsRef = collection(db, 'restaurants', restaurantId, 'orderItems');
+      const itemsRef = collection(db, 'restaurants', finalId, 'orderItems');
       const unsubItems = onSnapshot(itemsRef, (snapshot) => {
-        const itemsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as OrderItem[];
-        set({ orderItems: itemsData });
-        get().updateDiagnostic('orderItems', itemsData.length === 0 ? 'empty' : 'active', undefined, itemsData.length);
+        try {
+          const itemsData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              const id = doc.id;
+              const orderId = data.orderId || data.orderID || data.order_id || "";
+              const name = data.name || data.itemName || data.title || "Unknown Item";
+              const quantity = Number(data.quantity !== undefined ? data.quantity : (data.qty !== undefined ? data.qty : 1));
+              const price = Number(data.price !== undefined ? data.price : (data.cost !== undefined ? data.cost : 0));
+              const category = data.category || "";
+              
+              return {
+                ...data,
+                id,
+                orderId,
+                name,
+                quantity,
+                price,
+                category
+              } as OrderItem;
+            } catch (innerErr) {
+              console.error(`Failed parsing orderItem document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is OrderItem => doc !== null);
+
+          fetchedItems = itemsData;
+          updateAndMergeOrderItems();
+        } catch (mapErr: any) {
+          console.error("OrderItems mapping/state reduction failed safely:", mapErr);
+          set({ orderItems: [] });
+        }
       }, (err) => {
-        console.error("OrderItems listener error", err);
-        get().updateDiagnostic('orderItems', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/orderItems`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('orderItems', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubItems);
 
       // 3. orderItemModifiers
-      const modRef = collection(db, 'restaurants', restaurantId, 'orderItemModifiers');
+      const modRef = collection(db, 'restaurants', finalId, 'orderItemModifiers');
       const unsubMod = onSnapshot(modRef, (snapshot) => {
-        const modData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as OrderItemModifier[];
-        set({ orderItemModifiers: modData });
-        get().updateDiagnostic('orderItemModifiers', modData.length === 0 ? 'empty' : 'active', undefined, modData.length);
+        try {
+          const modData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              return { id: doc.id, ...data } as OrderItemModifier;
+            } catch (innerErr) {
+              console.error(`Failed parsing modifier document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is OrderItemModifier => doc !== null);
+          set({ orderItemModifiers: modData });
+          get().updateDiagnostic('orderItemModifiers', modData.length === 0 ? 'empty' : 'active', undefined, modData.length);
+        } catch (mapErr: any) {
+          console.error("OrderItemModifiers mapping/state reduction failed safely:", mapErr);
+          set({ orderItemModifiers: [] });
+        }
       }, (err) => {
-        console.error("OrderItemModifiers listener error", err);
-        get().updateDiagnostic('orderItemModifiers', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/orderItemModifiers`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('orderItemModifiers', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubMod);
 
       // 4. menuItems
-      const menuRef = collection(db, 'restaurants', restaurantId, 'menuItems');
+      const menuRef = collection(db, 'restaurants', finalId, 'menuItems');
       const unsubMenu = onSnapshot(menuRef, (snapshot) => {
-        const menuData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as MenuItem[];
-        set({ menuItems: menuData });
-        get().updateDiagnostic('menuItems', menuData.length === 0 ? 'empty' : 'active', undefined, menuData.length);
+        try {
+          const menuData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              const name = data.name || data.itemName || data.title || "Unknown MenuItem";
+              const price = Number(data.price !== undefined ? data.price : (data.cost !== undefined ? data.cost : (data.basePrice !== undefined ? data.basePrice : 0)));
+              const category = data.category || "General";
+              return {
+                ...data,
+                id: doc.id,
+                name,
+                price,
+                category
+              } as MenuItem;
+            } catch (innerErr) {
+              console.error(`Failed parsing menuItem document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is MenuItem => doc !== null);
+          set({ menuItems: menuData });
+          get().updateDiagnostic('menuItems', menuData.length === 0 ? 'empty' : 'active', undefined, menuData.length);
+        } catch (mapErr: any) {
+          console.error("MenuItems mapping/state reduction failed safely:", mapErr);
+          set({ menuItems: [] });
+        }
       }, (err) => {
-        console.error("MenuItems listener error", err);
-        get().updateDiagnostic('menuItems', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/menuItems`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('menuItems', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubMenu);
 
       // 5. ingredients
-      const ingRef = collection(db, 'restaurants', restaurantId, 'ingredients');
+      const ingRef = collection(db, 'restaurants', finalId, 'ingredients');
       const unsubIng = onSnapshot(ingRef, (snapshot) => {
-        const ingData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Ingredient[];
-        set({ ingredients: ingData });
-        get().updateDiagnostic('ingredients', ingData.length === 0 ? 'empty' : 'active', undefined, ingData.length);
+        try {
+          const ingData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              const name = data.name || data.ingredientName || "Unknown Ingredient";
+              const currentQty = Number(data.currentQty !== undefined ? data.currentQty : (data.quantity !== undefined ? data.quantity : (data.currentQuantity !== undefined ? data.currentQuantity : (data.stock !== undefined ? data.stock : 0))));
+              const unit = data.unit || "units";
+              const lowStockThreshold = Number(data.lowStockThreshold !== undefined ? data.lowStockThreshold : 10);
+              const directStock = data.directStock !== undefined ? !!data.directStock : false;
+              return {
+                ...data,
+                id: doc.id,
+                name,
+                currentQty,
+                unit,
+                lowStockThreshold,
+                directStock
+              } as Ingredient;
+            } catch (innerErr) {
+              console.error(`Failed parsing ingredient document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is Ingredient => doc !== null);
+          set({ ingredients: ingData });
+          get().updateDiagnostic('ingredients', ingData.length === 0 ? 'empty' : 'active', undefined, ingData.length);
+        } catch (mapErr: any) {
+          console.error("Ingredients mapping/state reduction failed safely:", mapErr);
+          set({ ingredients: [] });
+        }
       }, (err) => {
-        console.error("Ingredients listener error", err);
-        get().updateDiagnostic('ingredients', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/ingredients`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('ingredients', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubIng);
 
       // 6. expenses
-      const expRef = collection(db, 'restaurants', restaurantId, 'expenses');
+      const expRef = collection(db, 'restaurants', finalId, 'expenses');
       const unsubExp = onSnapshot(expRef, (snapshot) => {
-        const expData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Expense[];
-        set({ expenses: expData });
-        get().updateDiagnostic('expenses', expData.length === 0 ? 'empty' : 'active', undefined, expData.length);
+        try {
+          const expData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              const date = data.date || data.createdAt || data.timestamp || new Date().toISOString();
+              const category = data.category || "General";
+              const amount = Number(data.amount !== undefined ? data.amount : 0);
+              const description = data.description || "";
+              return {
+                ...data,
+                id: doc.id,
+                date,
+                category,
+                amount,
+                description
+              } as Expense;
+            } catch (innerErr) {
+              console.error(`Failed parsing expense document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is Expense => doc !== null);
+          set({ expenses: expData });
+          get().updateDiagnostic('expenses', expData.length === 0 ? 'empty' : 'active', undefined, expData.length);
+        } catch (mapErr: any) {
+          console.error("Expenses mapping/state reduction failed safely:", mapErr);
+          set({ expenses: [] });
+        }
       }, (err) => {
-        console.error("Expenses listener error", err);
-        get().updateDiagnostic('expenses', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/expenses`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('expenses', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubExp);
 
       // 7. expenseCategories
-      const expCatRef = collection(db, 'restaurants', restaurantId, 'expenseCategories');
+      const expCatRef = collection(db, 'restaurants', finalId, 'expenseCategories');
       const unsubExpCat = onSnapshot(expCatRef, (snapshot) => {
-        const catData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ExpenseCategory[];
-        set({ expenseCategories: catData });
-        get().updateDiagnostic('expenseCategories', catData.length === 0 ? 'empty' : 'active', undefined, catData.length);
+        try {
+          const catData = snapshot.docs.map(doc => {
+            try {
+              const data = doc.data();
+              return { id: doc.id, ...data } as ExpenseCategory;
+            } catch (innerErr) {
+              console.error(`Failed parsing expenseCategory document ${doc.id}:`, innerErr);
+              return null;
+            }
+          }).filter((doc): doc is ExpenseCategory => doc !== null);
+          set({ expenseCategories: catData });
+          get().updateDiagnostic('expenseCategories', catData.length === 0 ? 'empty' : 'active', undefined, catData.length);
+        } catch (mapErr: any) {
+          console.error("ExpenseCategories mapping/state reduction failed safely:", mapErr);
+          set({ expenseCategories: [] });
+        }
       }, (err) => {
-        console.error("ExpenseCategories listener error", err);
-        get().updateDiagnostic('expenseCategories', 'error', err.message, 0);
+        console.group("❌ FIRESTORE STREAM FAILURE DIAGNOSTIC");
+        console.error("Collection Path Context:", `restaurants/${finalId}/expenseCategories`);
+        console.error("Error Code:", err.code);
+        console.error("Error Message:", err.message);
+        console.groupEnd();
+        get().updateDiagnostic('expenseCategories', 'error', `${err.code}: ${err.message}`, 0);
       });
       unsubscribes.push(unsubExpCat);
 
@@ -394,7 +634,7 @@ export const useStore = create<DashboardState>((set, get) => ({
     }
 
     return () => {
-      console.log(`Cleaning up real-time subscription for restaurant ID: "${restaurantId}"`);
+      console.log(`Cleaning up real-time subscription for restaurant ID: "${finalId}"`);
       unsubscribes.forEach(unsub => unsub());
     };
   },

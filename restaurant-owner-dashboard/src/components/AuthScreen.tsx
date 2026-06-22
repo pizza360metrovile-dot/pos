@@ -39,9 +39,7 @@ export default function AuthScreen() {
             <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A] animate-pulse"></span>
             <span>SECURE GATEWAY</span>
           </div>
-          {/* <div className="mx-auto w-12 h-12 bg-[#F7F8FA] text-[#3B82F6] border border-[#E5E7EB] rounded-lg flex items-center justify-center mb-3"> */}
-            {/* <ChefHat className="w-6 h-6 text-[#3B82F6]" /> */}
-          {/* </div> */}
+        
           <h1 className="text-xl font-bold tracking-tight text-[#111827]">Xenzua POS</h1>
           <p className="text-[#6B7280] text-xs mt-1">Live Management & Audits Control Panel</p>
         </div>

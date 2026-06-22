@@ -92,9 +92,31 @@ export default function DeletedTab() {
   };
 
   const getOrderManifest = (orderId: string) => {
-    const items = orderItems.filter((oi) => oi.orderId === orderId);
+    let items = orderItems.filter((oi) => {
+      const oId = oi.orderId || (oi as any).orderID || (oi as any).order_id;
+      return oId === orderId;
+    });
+
+    if (items.length === 0) {
+      const matchingOrder = orders.find((o) => o.id === orderId);
+      const embedded = (matchingOrder as any)?.items || (matchingOrder as any)?.orderItems || (matchingOrder as any)?.products || [];
+      if (Array.isArray(embedded)) {
+        items = embedded.map((item: any, idx: number) => ({
+          id: item.id || `${orderId}-item-${idx}`,
+          orderId,
+          name: item.name || item.itemName || item.title || "Unknown Item",
+          quantity: Number(item.quantity !== undefined ? item.quantity : (item.qty !== undefined ? item.qty : 1)),
+          price: Number(item.price !== undefined ? item.price : (item.cost !== undefined ? item.cost : 0)),
+          category: item.category || ""
+        }));
+      }
+    }
+
     return items.map((item) => {
-      const modifiers = orderItemModifiers.filter((mod) => mod.orderItemId === item.id);
+      const modifiers = orderItemModifiers.filter((mod) => {
+        const oiId = mod.orderItemId || (mod as any).orderItem_id || (mod as any).orderitem_id;
+        return oiId === item.id;
+      });
       return { ...item, modifiers };
     });
   };

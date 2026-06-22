@@ -26,7 +26,7 @@ import { format, startOfDay, endOfDay, subDays, startOfWeek, startOfMonth } from
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import clsx from 'clsx';
-import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDateRange } from '../utils/businessDayCalculation';
+import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDateRange, getRecordsDateRange, convertCustomDateRange, getCachedCutoff } from '../utils/businessDayCalculation';
 
 type DateShortcut = 'Today' | 'Yesterday' | 'This Week' | 'This Month' | 'All' | 'Custom';
 
@@ -104,38 +104,55 @@ export default function Expenses() {
         }
       }
       const expBizTime = expBizVal ? new Date(expBizVal).getTime() : getBusinessDate(expense.date).getTime();
-      const now = new Date();
-      const nowMs = now.getTime();
+      const cutoff = getCachedCutoff();
+      const [cutoffHour, cutoffMinute] = cutoff.split(':').map(Number);
+      
+      const expBizDate = new Date(expBizTime);
+      const comparisonTime = new Date(
+        expBizDate.getFullYear(),
+        expBizDate.getMonth(),
+        expBizDate.getDate(),
+        cutoffHour,
+        cutoffMinute,
+        0,
+        0
+      ).getTime();
+
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
 
       if (dateShortcut === 'Today') {
-        const bizToday = getBusinessDate(nowMs);
-        return expBizTime === bizToday.getTime();
+        const range = getRecordsDateRange('today', cutoff);
+        startDate = range.startDate;
+        endDate = range.endDate;
       } else if (dateShortcut === 'Yesterday') {
-        const bizToday = getBusinessDate(nowMs);
-        const yesterday = new Date(bizToday);
-        yesterday.setDate(yesterday.getDate() - 1);
-        return expBizTime === yesterday.getTime();
+        const range = getRecordsDateRange('yesterday', cutoff);
+        startDate = range.startDate;
+        endDate = range.endDate;
       } else if (dateShortcut === 'This Week') {
-        const bizToday = getBusinessDate(nowMs);
-        const currentDay = bizToday.getDay();
-        const gap = currentDay === 0 ? 6 : currentDay - 1;
-        const monday = new Date(bizToday);
-        monday.setDate(bizToday.getDate() - gap);
-        return expBizTime >= monday.getTime() && expBizTime <= bizToday.getTime();
+        const range = getRecordsDateRange('thisWeek', cutoff);
+        startDate = range.startDate;
+        endDate = range.endDate;
       } else if (dateShortcut === 'This Month') {
-        const bizToday = getBusinessDate(nowMs);
-        const firstOfMonth = new Date(bizToday.getFullYear(), bizToday.getMonth(), 1);
-        return expBizTime >= firstOfMonth.getTime() && expBizTime <= bizToday.getTime();
+        const range = getRecordsDateRange('thisMonth', cutoff);
+        startDate = range.startDate;
+        endDate = range.endDate;
       } else if (dateShortcut === 'Custom') {
-        if (customStartDate) {
-          const sDate = new Date(`${customStartDate}T00:00:00`);
-          if (expBizTime < sDate.getTime()) return false;
-        }
-        if (customEndDate) {
-          const eDate = new Date(`${customEndDate}T00:00:00`);
-          if (expBizTime > eDate.getTime()) return false;
+        if (customStartDate && customEndDate) {
+          const range = convertCustomDateRange(customStartDate, customEndDate, cutoff);
+          startDate = range.startDate;
+          endDate = range.endDate;
+        } else if (customStartDate) {
+          const range = convertCustomDateRange(customStartDate, customStartDate, cutoff);
+          startDate = range.startDate;
+        } else if (customEndDate) {
+          const range = convertCustomDateRange(customEndDate, customEndDate, cutoff);
+          endDate = range.endDate;
         }
       }
+
+      if (startDate && comparisonTime < startDate.getTime()) return false;
+      if (endDate && comparisonTime > endDate.getTime()) return false;
       return true;
     });
   }, [expenses, search, selectedCategoryId, dateShortcut, customStartDate, customEndDate]);
