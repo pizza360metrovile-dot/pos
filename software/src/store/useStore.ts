@@ -907,6 +907,24 @@ export const useStore = create<StoreState>((set, get) => ({
 
     const settingsEntry = await db.settings.where({ key: 'main' }).first();
     const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+
+    // Clear any temporary 'in-progress' orders from previous sessions to prevent persistence
+    try {
+      const inProgressInDb = await db.orders.where({ status: 'in-progress' }).toArray();
+      for (const order of inProgressInDb) {
+        await db.orders.delete(order.id);
+        get().syncToFirebase('orders', order.id, null);
+        // Delete corresponding order items
+        const oItems = await db.orderItems.where({ orderId: order.id }).toArray();
+        for (const item of oItems) {
+          await db.orderItems.delete(item.id!);
+          get().syncToFirebase('orderItems', item.id!, null);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to clean up in-progress orders on init:', err);
+    }
+
     const orders = await db.orders.orderBy('createdAt').reverse().toArray();
     const ingredients = await db.ingredients.toArray();
     const recipes = await db.recipes.toArray();
@@ -1881,7 +1899,16 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!order.completedAt) {
         order.completedAt = Date.now();
       }
-      order.businessDate = getBusinessDate(order.completedAt).getTime();
+      order.businessDate = getBusinessDate(order.completedAt);
+      
+      // Validate businessDate is sane, otherwise auto-correct
+      const bdMs = order.businessDate;
+      const completedMs = order.completedAt;
+      const timeDiff = completedMs - bdMs;
+      if (timeDiff < 0 || timeDiff > 86400000) {
+        console.warn('❌ Invalid businessDate detected in addOrder! Auto-correcting to exact calculation.');
+        order.businessDate = getBusinessDate(completedMs).getTime();
+      }
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
       await db.orders.add(order);
@@ -1942,7 +1969,16 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!order.completedAt) {
         order.completedAt = Date.now();
       }
-      order.businessDate = getBusinessDate(order.completedAt).getTime();
+      order.businessDate = getBusinessDate(order.completedAt);
+      
+      // Validate businessDate is sane, otherwise auto-correct
+      const bdMs = order.businessDate;
+      const completedMs = order.completedAt;
+      const timeDiff = completedMs - bdMs;
+      if (timeDiff < 0 || timeDiff > 86400000) {
+        console.warn('❌ Invalid businessDate detected in updateOrder! Auto-correcting to exact calculation.');
+        order.businessDate = getBusinessDate(completedMs).getTime();
+      }
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
       await db.orders.put(order);

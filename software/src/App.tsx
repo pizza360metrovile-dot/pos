@@ -37,7 +37,8 @@ import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
-import { migrateBusinessDates } from './migrations/fixBusinessDates';
+import { fixAllBusinessDates } from './migrations/fixAllBusinessDates';
+import { db } from './lib/db';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -448,10 +449,10 @@ export default function App() {
   useEffect(() => {
     const runMigration = async () => {
       try {
-        const result = await migrateBusinessDates();
+        const result = await fixAllBusinessDates();
         console.log('Migration result:', result);
       } catch (error) {
-        console.error('Migration error:', error);
+        console.error('Migration failed:', error);
       }
     };
     
@@ -459,6 +460,33 @@ export default function App() {
       runMigration();
     }
   }, [restaurantUID]);
+
+  // Handle in-progress orders cleanup on app close/refresh/unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Clean up in-progress orders from Dexie immediately on tab close
+      try {
+        db.orders.where({ status: 'in-progress' }).toArray().then((inProgress) => {
+          for (const order of inProgress) {
+            db.orders.delete(order.id);
+            // Delete corresponding order items
+            db.orderItems.where({ orderId: order.id }).toArray().then((oItems) => {
+              for (const item of oItems) {
+                db.orderItems.delete(item.id!);
+              }
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to clean up in-progress orders on beforeunload:', err);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Escape key listener
   useEffect(() => {

@@ -53,27 +53,133 @@ export function getCachedCutoff(): string {
  * Output: Date object representing which business day this timestamp belongs to (at cutoff time).
  */
 export function getBusinessDate(timestamp: number): Date {
-  const orderTime = new Date(timestamp);
-  const cutoff = cachedCutoff;
-  const [hour, minute] = cutoff.split(':').map(Number);
+  // Cutoff time: 04:00 (4 AM)
+  const CUTOFF_HOUR = 4;
+  const CUTOFF_MINUTE = 0;
 
-  // Create today's cutoff datetime
-  const todayAtCutoff = new Date(orderTime);
-  todayAtCutoff.setHours(hour, minute, 0, 0);
-
-  if (orderTime.getTime() >= todayAtCutoff.getTime()) {
-    // Order is after or at cutoff, use today
-    const businessDateStart = new Date(orderTime);
-    businessDateStart.setHours(hour, minute, 0, 0);
-    return businessDateStart;
+  // Create a date object from timestamp
+  const orderDateTime = new Date(timestamp);
+  
+  // Get the calendar date of this order
+  // (year, month, date only - zero out hours)
+  const orderYear = orderDateTime.getFullYear();
+  const orderMonth = orderDateTime.getMonth();
+  const orderDate = orderDateTime.getDate();
+  
+  // Create cutoff time for THIS calendar day
+  const cutoffDateTime = new Date(
+    orderYear,
+    orderMonth,
+    orderDate,
+    CUTOFF_HOUR,
+    CUTOFF_MINUTE,
+    0,
+    0
+  );
+  
+  // RULE: If order time >= cutoff time on its calendar day,
+  // then business day = that calendar day
+  if (orderDateTime.getTime() >= cutoffDateTime.getTime()) {
+    // Business day started on this day
+    // Return start of this business day (at cutoff)
+    return cutoffDateTime;
   } else {
-    // Order is before cutoff, use yesterday
-    const yesterday = new Date(orderTime);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const businessDateStart = new Date(yesterday);
-    businessDateStart.setHours(hour, minute, 0, 0);
-    return businessDateStart;
+    // Order is before cutoff on its day
+    // So it belongs to PREVIOUS business day
+    // Business day = previous calendar day at cutoff
+    const previousDay = new Date(
+      orderYear,
+      orderMonth,
+      orderDate - 1,  // Previous calendar date
+      CUTOFF_HOUR,
+      CUTOFF_MINUTE,
+      0,
+      0
+    );
+    return previousDay;
   }
+}
+
+export function getRecordsDateRange(
+  period: string,
+  cutoff: string = cachedCutoff
+): { startDate: Date; endDate: Date } {
+  const CUTOFF_HOUR = 4;
+  const CUTOFF_MINUTE = 0;
+  
+  // Current moment
+  const now = new Date();
+  
+  // Today's calendar date at cutoff time
+  const todayAtCutoff = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    CUTOFF_HOUR,
+    CUTOFF_MINUTE,
+    0,
+    0
+  );
+  
+  let startDate: Date;
+  let endDate: Date;
+  
+  if (period === 'today') {
+    // If current time >= cutoff, today's business day started at cutoff
+    // If current time < cutoff, still in yesterday's business day
+    if (now.getTime() >= todayAtCutoff.getTime()) {
+      // Business day started
+      startDate = new Date(todayAtCutoff);
+      // End is tomorrow at cutoff - 1ms
+      endDate = new Date(todayAtCutoff);
+      endDate.setDate(endDate.getDate() + 1);
+      endDate.setMilliseconds(-1);
+    } else {
+      // Still in yesterday's business day
+      startDate = new Date(todayAtCutoff);
+      startDate.setDate(startDate.getDate() - 1);
+      endDate = new Date(todayAtCutoff);
+      endDate.setMilliseconds(-1);
+    }
+  } 
+  else if (period === 'yesterday') {
+    // Yesterday's business day = (yesterday calendar day at cutoff) to (today at cutoff - 1ms)
+    startDate = new Date(todayAtCutoff);
+    startDate.setDate(startDate.getDate() - 1);
+    endDate = new Date(todayAtCutoff);
+    endDate.setMilliseconds(-1);
+  } 
+  else if (period === 'thisWeek' || period === 'week') {
+    // This week = Monday of this week at cutoff to now
+    const dayOfWeek = now.getDay(); 
+    // 0=Sunday, 1=Monday, ... 6=Saturday
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    
+    startDate = new Date(now);
+    startDate.setDate(now.getDate() - daysToMonday);
+    startDate.setHours(CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0);
+    endDate = new Date(now);
+  } 
+  else if (period === 'thisMonth' || period === 'month') {
+    // This month = 1st of month at cutoff to now
+    startDate = new Date(now);
+    startDate.setDate(1);
+    startDate.setHours(CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0);
+    endDate = new Date(now);
+  } 
+  else if (period === 'lastMonth' || period === 'last-month') {
+    // Last month helper logic
+    const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0);
+    startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1, CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0);
+    endDate = new Date(firstOfThisMonth.getTime() - 1);
+  }
+  else {
+    // All time
+    startDate = new Date(0);
+    endDate = new Date(now);
+  }
+  
+  return { startDate, endDate };
 }
 
 /**
@@ -137,76 +243,6 @@ export function getTodayBusinessDay(cutoff: string = cachedCutoff): Date {
     const yesterday = new Date(todayAtCutoff);
     yesterday.setDate(yesterday.getDate() - 1);
     return yesterday;
-  }
-}
-
-export function getRecordsDateRange(
-  period: string,
-  cutoff: string = cachedCutoff
-): { startDate: Date; endDate: Date } {
-  const [hour, minute] = cutoff.split(':').map(Number);
-  const now = new Date();
-  
-  // Create cutoff datetime for today
-  const todayAtCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
-  
-  let todayBusStart: Date;
-  if (now.getTime() >= todayAtCutoff.getTime()) {
-    // Business day already started
-    todayBusStart = todayAtCutoff;
-  } else {
-    // Still in yesterday's business day
-    todayBusStart = new Date(todayAtCutoff.getTime());
-    todayBusStart.setDate(todayBusStart.getDate() - 1);
-  }
-  
-  const tomorrowBusStart = new Date(todayBusStart.getTime());
-  tomorrowBusStart.setDate(tomorrowBusStart.getDate() + 1);
-  
-  switch (period) {
-    case 'today': {
-      const startDate = todayBusStart;
-      const endDate = new Date(tomorrowBusStart.getTime() - 1);
-      return { startDate, endDate };
-    }
-    case 'yesterday': {
-      const startDate = new Date(todayBusStart.getTime());
-      startDate.setDate(startDate.getDate() - 1);
-      const endDate = new Date(todayBusStart.getTime() - 1);
-      return { startDate, endDate };
-    }
-    case 'thisWeek':
-    case 'week': {
-      const today = new Date();
-      const dayOfWeek = today.getDay(); // (0=Sunday, 1=Monday)
-      // Get Monday
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      const monday = new Date(today);
-      monday.setDate(monday.getDate() - daysToMonday);
-      monday.setHours(hour, minute, 0, 0);
-
-      const endDate = new Date(); // current moment
-      return { startDate: monday, endDate };
-    }
-    case 'thisMonth':
-    case 'month': {
-      // Get 1st of current month
-      const startDate = new Date(todayBusStart.getFullYear(), todayBusStart.getMonth(), 1, hour, minute, 0, 0);
-      const endDate = new Date(tomorrowBusStart.getTime() - 1);
-      return { startDate, endDate };
-    }
-    case 'lastMonth':
-    case 'last-month': {
-      const startDate = new Date(todayBusStart.getFullYear(), todayBusStart.getMonth() - 1, 1, hour, minute, 0, 0);
-      const firstOfThisMonth = new Date(todayBusStart.getFullYear(), todayBusStart.getMonth(), 1, hour, minute, 0, 0);
-      const endDate = new Date(firstOfThisMonth.getTime() - 1);
-      return { startDate, endDate };
-    }
-    default: {
-      const startDate = todayBusStart;
-      const endDate = new Date(tomorrowBusStart.getTime() - 1);
-      return { startDate, endDate };
-    }
   }
 }
 
