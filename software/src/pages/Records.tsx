@@ -40,7 +40,8 @@ import { clsx } from 'clsx';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow, isAfter, subHours } from 'date-fns';
-import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDayRange, convertCustomDateRange, getCachedCutoff } from '../utils/businessDayCalculation';
+import { formatTime12Hour, formatDateTime12Hour } from '../utils/timeFormat';
+import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDayRange, convertCustomDateRange, getCachedCutoff, getBusinessDateDisplay } from '../utils/businessDayCalculation';
 import { db } from '../lib/db';
 
 const ITEMS_PER_PAGE = 25;
@@ -204,30 +205,44 @@ export default function Records() {
       let filtered = rawOrders;
       if (startDate && endDate) {
         filtered = rawOrders.filter(order => {
-          let orderBusDateValue = order.businessDate;
-          if (orderBusDateValue && typeof orderBusDateValue === 'object') {
-            if (typeof orderBusDateValue.seconds === 'number') {
-              orderBusDateValue = orderBusDateValue.seconds * 1000;
-            } else if (orderBusDateValue instanceof Date) {
-              orderBusDateValue = orderBusDateValue.getTime();
-            }
-          }
+          // Get the actual timestamp when order was completed
+          const orderTimestamp = order.completedAt || order.createdAt || Date.now();
           
-          const orderBusDate = orderBusDateValue 
-            ? new Date(orderBusDateValue) 
-            : getBusinessDate(order.completedAt || order.createdAt || Date.now());
-          
-          const comparisonTime = new Date(
-            orderBusDate.getFullYear(),
-            orderBusDate.getMonth(),
-            orderBusDate.getDate(),
+          // Which business day does this timestamp belong to?
+          const orderDate = new Date(orderTimestamp);
+          const cutoffTime = new Date(
+            orderDate.getFullYear(),
+            orderDate.getMonth(),
+            orderDate.getDate(),
             cutoffHour,
             cutoffMinute,
             0,
             0
-          ).getTime();
+          );
           
-          return comparisonTime >= startDate!.getTime() && comparisonTime <= endDate!.getTime();
+          // Determine which business day this order belongs to
+          let orderBusinessDayStart: number;
+          
+          if (orderTimestamp >= cutoffTime.getTime()) {
+            // Order is after cutoff = this calendar day's business day
+            orderBusinessDayStart = cutoffTime.getTime();
+          } else {
+            // Order is before cutoff = previous calendar day's business day
+            const prevDay = new Date(
+              orderDate.getFullYear(),
+              orderDate.getMonth(),
+              orderDate.getDate() - 1,
+              cutoffHour,
+              cutoffMinute,
+              0,
+              0
+            );
+            orderBusinessDayStart = prevDay.getTime();
+          }
+          
+          // Now compare: is this order's business day start within the range?
+          return orderBusinessDayStart >= startDate!.getTime() && 
+                 orderBusinessDayStart <= endDate!.getTime();
         });
         
         console.log('Filter:', selectedRange);
@@ -1010,10 +1025,18 @@ export default function Records() {
                         {order.orderNumber}
                       </td>
                       <td className="p-[14px_16px] text-[14px] text-text-primary" style={{ width: '150px', minWidth: '150px' }}>
-                        <div className="flex flex-col">
-                          <span className="font-bold">{format(order.createdAt, 'HH:mm')}</span>
-                          <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{format(order.createdAt, 'dd MMM yy')}</span>
-                        </div>
+                        {(() => {
+                          const { time, businessDate } = getBusinessDateDisplay(order.completedAt || order.createdAt || Date.now(), getCachedCutoff());
+                          const day = businessDate.getDate();
+                          const month = businessDate.toLocaleString('default', { month: 'short' });
+                          const year = businessDate.getFullYear().toString().slice(-2);
+                          return (
+                            <div className="flex flex-col">
+                              <span className="font-bold">{time}</span>
+                              <span className="text-[10px] text-text-muted font-mono uppercase font-bold tracking-widest mt-0.5">{day} {month} {year}</span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="p-[14px_16px] text-[14px] text-text-primary font-bold uppercase tracking-tight truncate max-w-[140px]" style={{ width: '140px', minWidth: '140px' }} title={order.customerName || ''}>
                         {order.customerName || '—'}
@@ -1197,7 +1220,7 @@ export default function Records() {
                         <div>
                           <span className="block text-text-muted uppercase font-bold tracking-tight">Deleted At</span>
                           <span className="font-mono font-bold text-text-primary">
-                            {selectedOrder.deletedAt ? format(selectedOrder.deletedAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                            {selectedOrder.deletedAt ? format(selectedOrder.deletedAt, 'dd MMM yyyy hh:mm:ss a') : '—'}
                           </span>
                         </div>
                         <div>
@@ -1210,7 +1233,7 @@ export default function Records() {
                   <section className="grid grid-cols-2 gap-4">
                     <div className="bg-bg-surface-2 p-4 rounded-xl border border-border-light shadow-sm">
                       <div className="text-[12px] text-text-muted uppercase tracking-wider font-bold mb-1">Sync Phase</div>
-                      <div className="font-mono text-sm font-bold text-text-primary">{format(selectedOrder.createdAt, 'HH:mm:ss')}</div>
+                      <div className="font-mono text-sm font-bold text-text-primary">{format(selectedOrder.createdAt, 'hh:mm:ss a')}</div>
                     </div>
                     <div className="bg-bg-surface-2 p-4 rounded-xl border border-border-light shadow-sm">
                       <div className="text-[12px] text-text-muted uppercase tracking-wider font-bold mb-1">Type Vector</div>
@@ -1634,7 +1657,6 @@ export default function Records() {
             <div className="space-y-1 text-xs leading-relaxed text-red-800">
               <div className="font-extrabold uppercase tracking-wide">Administrative Warning & Context Logging</div>
               <p className="text-text-muted">
-                All activities in this secure viewport are cryptographically logged. Unauthorized viewing is strictly prohibited.
                 Audit results represent order records matching active filter range bounds: 
                 <span className="font-bold text-text-primary font-mono ml-1 px-1.5 py-0.5 rounded bg-bg-surface border border-border-light">
                   {dateBounds.start ? format(dateBounds.start, 'dd MMM yyyy') : 'Beginning of records'} — {dateBounds.end ? format(dateBounds.end, 'dd MMM yyyy') : 'Present'}
@@ -1692,7 +1714,7 @@ export default function Records() {
                               </span>
                             </div>
                             <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-bold uppercase tracking-wider">
-                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM HH:mm') : '—'}</span>
+                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM hh:mm a') : '—'}</span>
                               <span>•</span>
                               <span>By: {order.cashierName || '—'}</span>
                             </div>
@@ -1727,7 +1749,7 @@ export default function Records() {
                               <div className="bg-white border border-border-light rounded-lg p-2.5">
                                 <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Cancelled At</span>
                                 <span className="font-mono font-bold text-text-primary">
-                                  {order.cancelledAt ? format(order.cancelledAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                                  {order.cancelledAt ? format(order.cancelledAt, 'dd MMM yyyy hh:mm:ss a') : '—'}
                                 </span>
                               </div>
                               <div className="bg-white border border-border-light rounded-lg p-2.5">
@@ -1792,7 +1814,7 @@ export default function Records() {
                               </span>
                             </div>
                             <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-bold uppercase tracking-wider">
-                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM HH:mm') : '—'}</span>
+                              <span>{order.createdAt ? format(order.createdAt, 'dd MMM hh:mm a') : '—'}</span>
                               <span>•</span>
                               <span>By: {order.cashierName || '—'}</span>
                             </div>
@@ -1827,7 +1849,7 @@ export default function Records() {
                               <div className="bg-white border border-border-light rounded-lg p-2.5">
                                 <span className="block text-[8px] text-text-muted font-bold uppercase tracking-wider mb-0.5">Deleted At</span>
                                 <span className="font-mono font-bold text-text-primary">
-                                  {order.deletedAt ? format(order.deletedAt, 'dd MMM yyyy HH:mm:ss') : '—'}
+                                  {order.deletedAt ? format(order.deletedAt, 'dd MMM yyyy hh:mm:ss a') : '—'}
                                 </span>
                               </div>
                               <div className="bg-white border border-border-light rounded-lg p-2.5">
@@ -1872,7 +1894,7 @@ export default function Records() {
                 {/* Cancelled Incident Summary */}
                 <div className="bg-bg-surface p-5 rounded-2xl border border-border-light shadow-xs space-y-4">
                   <div className="border-b border-border-light pb-3 flex justify-between items-center">
-                    <span className="text-[10px] text-red-650 font-black uppercase tracking-widest block font-extrabold">Cancellations</span>
+                    <span className="text-[10px] text-red-650 font-black uppercase tracking-widest block font-extrabold">Cancellations(KOT)</span>
                     <span className="px-2 py-0.5 text-[9px] bg-red-100 text-red-650 border border-red-200/20 font-bold uppercase tracking-wider rounded">
                       Rate: {auditLogStats.cancelledRate.toFixed(2)}%
                     </span>

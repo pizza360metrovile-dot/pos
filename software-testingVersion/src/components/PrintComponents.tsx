@@ -115,7 +115,7 @@ export const KitchenTicket = React.forwardRef<HTMLDivElement, { order: Order; se
             </tr>
             <tr>
               <td style={{ padding: '1px 0', fontWeight: 'bold' }}>Time:</td>
-              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'HH:mm:ss')}</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'hh:mm:ss a')}</td>
             </tr>
             {settings.showOrderTypeOnKOT && (
               <tr>
@@ -348,7 +348,7 @@ export const DeltaKitchenTicket = React.forwardRef<HTMLDivElement, {
         
         <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '11px' }}>
           <div style={{ fontWeight: '900' }}>** REPLACE PREVIOUS KOT **</div>
-          {lastSentAt && <div style={{ fontSize: '10px', marginTop: '2px' }}>PREVIOUS SENT AT: {format(lastSentAt, 'HH:mm')}</div>}
+          {lastSentAt && <div style={{ fontSize: '10px', marginTop: '2px' }}>PREVIOUS SENT AT: {format(lastSentAt, 'hh:mm a')}</div>}
         </div>
     </div>
   );
@@ -484,7 +484,7 @@ export const CustomerReceipt = React.forwardRef<HTMLDivElement, { order: Order; 
             </tr>
             <tr className="receipt-bold-meta">
               <td style={{ padding: '1px 0', fontWeight: 'bold' }}>Time:</td>
-              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'HH:mm:ss')}</td>
+              <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{format(order.createdAt, 'hh:mm:ss a')}</td>
             </tr>
             <tr className="receipt-bold-meta">
               <td style={{ padding: '3px 0 1px 0', borderTop: '1px dashed #000000', fontWeight: 'bold' }}>Type:</td>

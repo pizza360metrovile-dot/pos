@@ -37,6 +37,7 @@ import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
+import { db } from './lib/db';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -361,7 +362,7 @@ const TopBar = ({
         )}
         <div className="text-right flex flex-col md:flex-row md:gap-4 md:items-center">
           <p className="text-[10px] font-bold text-text-primary uppercase tracking-tight leading-none">{format(currentTime, 'EEE, MMM d')}</p>
-          <p className="text-[10px] text-text-secondary font-medium tracking-wide leading-none mt-0.5 md:mt-0">{format(currentTime, 'HH:mm:ss')}</p>
+          <p className="text-[10px] text-text-secondary font-medium tracking-wide leading-none mt-0.5 md:mt-0">{format(currentTime, 'hh:mm:ss a')}</p>
         </div>
       </div>
     </header>
@@ -440,6 +441,37 @@ export default function App() {
       stopKillSwitchListeners();
     };
   }, [user]);
+
+  const restaurantUID = user?.uid;
+
+
+
+  // Handle in-progress orders cleanup on app close/refresh/unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Clean up in-progress orders from Dexie immediately on tab close
+      try {
+        db.orders.where({ status: 'in-progress' }).toArray().then((inProgress) => {
+          for (const order of inProgress) {
+            db.orders.delete(order.id);
+            // Delete corresponding order items
+            db.orderItems.where({ orderId: order.id }).toArray().then((oItems) => {
+              for (const item of oItems) {
+                db.orderItems.delete(item.id!);
+              }
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to clean up in-progress orders on beforeunload:', err);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Escape key listener
   useEffect(() => {

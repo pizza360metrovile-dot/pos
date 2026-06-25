@@ -498,7 +498,7 @@ export default function Settings() {
     try {
       await importData(parsedBackup);
       
-      const backupDate = parsedBackup.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd HH:mm') : 'Unknown Date';
+      const backupDate = parsedBackup.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd hh:mm a') : 'Unknown Date';
       toast.success(`Backup restored successfully. App restored to ${backupDate}`);
       
       setTimeout(() => {
@@ -1364,7 +1364,7 @@ export default function Settings() {
                 <div className="border-t border-dashed border-gray-200 pt-3 space-y-2">
                    <div className="flex justify-between uppercase text-gray-400">
                      <span>#ORD-7329</span>
-                     <span>{format(new Date(), 'HH:mm')}</span>
+                     <span>{format(new Date(), 'hh:mm a')}</span>
                    </div>
                    {formData.showOrderTypeOnReceipt && <div className="font-extrabold text-center border p-1 border-gray-100 text-black">DINE-IN</div>}
                    {formData.showCustomerNameOnReceipt && <div className="uppercase text-gray-400">Cust: John Doe</div>}
@@ -1461,7 +1461,7 @@ export default function Settings() {
                  )}>
                    <div className="flex justify-between border-b border-gray-200 pb-5 mb-5">
                      <span className="font-extrabold uppercase">KOT #42</span>
-                     <span className="text-gray-400">{format(new Date(), 'HH:mm:ss')}</span>
+                     <span className="text-gray-400">{format(new Date(), 'hh:mm:ss a')}</span>
                    </div>
                    <div className="space-y-4">
                      <div className="flex items-start gap-4">
@@ -1653,7 +1653,7 @@ export default function Settings() {
                         <div className="text-[11px] font-bold uppercase text-accent tracking-widest">Backup Verified</div>
                         <div className="text-[15px] font-bold text-text-primary font-mono tracking-tight">{importFile?.name}</div>
                         <div className="text-[12px] text-text-muted mt-2 font-medium tracking-tight">
-                          Backup created: <span className="font-bold text-text-primary">{parsedBackup?.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd HH:mm') : 'Unknown Date'}</span>
+                          Backup created: <span className="font-bold text-text-primary">{parsedBackup?.exportedAt ? format(new Date(parsedBackup.exportedAt), 'yyyy-MM-dd hh:mm a') : 'Unknown Date'}</span>
                         </div>
                         <p className="text-[11px] text-danger font-bold uppercase tracking-tight leading-normal max-w-xs mx-auto mt-4">
                           This will replace ALL current app data with data from this backup file.

@@ -1899,16 +1899,6 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!order.completedAt) {
         order.completedAt = Date.now();
       }
-      order.businessDate = getBusinessDate(order.completedAt);
-      
-      // Validate businessDate is sane, otherwise auto-correct
-      const bdMs = order.businessDate;
-      const completedMs = order.completedAt;
-      const timeDiff = completedMs - bdMs;
-      if (timeDiff < 0 || timeDiff > 86400000) {
-        console.warn('❌ Invalid businessDate detected in addOrder! Auto-correcting to exact calculation.');
-        order.businessDate = getBusinessDate(completedMs).getTime();
-      }
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
       await db.orders.add(order);
@@ -1968,16 +1958,6 @@ export const useStore = create<StoreState>((set, get) => ({
     if (order.status === 'completed') {
       if (!order.completedAt) {
         order.completedAt = Date.now();
-      }
-      order.businessDate = getBusinessDate(order.completedAt);
-      
-      // Validate businessDate is sane, otherwise auto-correct
-      const bdMs = order.businessDate;
-      const completedMs = order.completedAt;
-      const timeDiff = completedMs - bdMs;
-      if (timeDiff < 0 || timeDiff > 86400000) {
-        console.warn('❌ Invalid businessDate detected in updateOrder! Auto-correcting to exact calculation.');
-        order.businessDate = getBusinessDate(completedMs).getTime();
       }
     }
     await db.transaction('rw', [db.orders, db.orderItems, db.menuItems, db.ingredients, db.recipes, db.recipeItems, db.stockLog, db.categories, db.dealOrderComponents], async () => {
@@ -2284,8 +2264,7 @@ export const useStore = create<StoreState>((set, get) => ({
         cancelledAt: completedTime,
         cancellationReason: reason,
         cancelledBy: cashierName || '—',
-        completedAt: completedTime,
-        businessDate: getBusinessDate(completedTime).getTime()
+        completedAt: completedTime
       };
 
       await db.transaction('rw', [db.orders], async () => {

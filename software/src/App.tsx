@@ -37,7 +37,6 @@ import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
-import { fixAllBusinessDates } from './migrations/fixAllBusinessDates';
 import { db } from './lib/db';
 
 function cn(...inputs: ClassValue[]) {
@@ -363,7 +362,7 @@ const TopBar = ({
         )}
         <div className="text-right flex flex-col md:flex-row md:gap-4 md:items-center">
           <p className="text-[10px] font-bold text-text-primary uppercase tracking-tight leading-none">{format(currentTime, 'EEE, MMM d')}</p>
-          <p className="text-[10px] text-text-secondary font-medium tracking-wide leading-none mt-0.5 md:mt-0">{format(currentTime, 'HH:mm:ss')}</p>
+          <p className="text-[10px] text-text-secondary font-medium tracking-wide leading-none mt-0.5 md:mt-0">{format(currentTime, 'hh:mm:ss a')}</p>
         </div>
       </div>
     </header>
@@ -445,21 +444,7 @@ export default function App() {
 
   const restaurantUID = user?.uid;
 
-  // After restaurant UID is set
-  useEffect(() => {
-    const runMigration = async () => {
-      try {
-        const result = await fixAllBusinessDates();
-        console.log('Migration result:', result);
-      } catch (error) {
-        console.error('Migration failed:', error);
-      }
-    };
-    
-    if (restaurantUID) {
-      runMigration();
-    }
-  }, [restaurantUID]);
+
 
   // Handle in-progress orders cleanup on app close/refresh/unload
   useEffect(() => {

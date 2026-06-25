@@ -561,7 +561,7 @@ export default function Expenses() {
                   return (
                     <tr key={exp.id} className="hover:bg-slate-50 transition-colors group">
                       <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500 font-medium">
-                        {format(new Date(exp.date), 'dd MMM yyyy, HH:mm')}
+                        {format(new Date(exp.date), 'dd MMM yyyy, hh:mm a')}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
                         {exp.title}

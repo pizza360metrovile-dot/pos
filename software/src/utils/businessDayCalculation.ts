@@ -143,11 +143,40 @@ export function getRecordsDateRange(
     }
   } 
   else if (period === 'yesterday') {
-    // Yesterday's business day = (yesterday calendar day at cutoff) to (today at cutoff - 1ms)
-    startDate = new Date(todayAtCutoff);
-    startDate.setDate(startDate.getDate() - 1);
-    endDate = new Date(todayAtCutoff);
-    endDate.setMilliseconds(-1);
+    // YESTERDAY = the business day before today's business day
+    const yesterdayAtCutoff = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 1,
+      CUTOFF_HOUR,
+      CUTOFF_MINUTE,
+      0,
+      0
+    );
+    
+    if (now.getTime() >= todayAtCutoff.getTime()) {
+      // After cutoff: today's business day started
+      // Yesterday = previous calendar day at cutoff to today at cutoff - 1ms
+      startDate = new Date(yesterdayAtCutoff);
+      endDate = new Date(todayAtCutoff);
+      endDate.setMilliseconds(-1);
+    } else {
+      // Before cutoff: still in yesterday's business day
+      // So "yesterday" = the day before that
+      // Yesterday = two days ago at cutoff to yesterday at cutoff - 1ms
+      const twoDaysAgoAtCutoff = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 2,
+        CUTOFF_HOUR,
+        CUTOFF_MINUTE,
+        0,
+        0
+      );
+      startDate = new Date(twoDaysAgoAtCutoff);
+      endDate = new Date(yesterdayAtCutoff);
+      endDate.setMilliseconds(-1);
+    }
   } 
   else if (period === 'thisWeek' || period === 'week') {
     // This week = Monday of this week at cutoff to now
@@ -268,4 +297,63 @@ export function convertCustomDateRange(
   const endDate = new Date(nextDay.getTime() - 1);
   
   return { startDate, endDate };
+}
+
+export function getBusinessDateDisplay(
+  timestamp: number | Date,
+  cutoff: string = '04:00'
+): {
+  time: string
+  businessDate: Date
+} {
+  // Convert order timestamp to business date format
+  // for display purposes
+  
+  const date = timestamp instanceof Date 
+    ? timestamp 
+    : new Date(timestamp);
+  
+  const [cutoffHour, cutoffMinute] = cutoff.split(':').map(Number);
+  
+  // Create cutoff time for this calendar date
+  const cutoffThisDay = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    cutoffHour,
+    cutoffMinute,
+    0,
+    0
+  );
+  
+  let businessDate: Date;
+  
+  if (date.getTime() >= cutoffThisDay.getTime()) {
+    // After cutoff = this calendar day is business day
+    businessDate = new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    );
+  } else {
+    // Before cutoff = previous calendar day is business day
+    businessDate = new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate() - 1
+    );
+  }
+  
+  // Time in 12-hour format
+  let hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  
+  const minutesStr = minutes.toString().padStart(2, '0');
+  const hoursStr = hours.toString().padStart(2, '0');
+  const time = `${hoursStr}:${minutesStr} ${ampm}`;
+  
+  return { time, businessDate };
 }

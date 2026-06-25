@@ -495,7 +495,7 @@ export default function Inventory() {
                     <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-6">
                         <div className="font-mono text-[10px] font-black text-slate-900 border border-slate-100 bg-slate-50 px-2 py-1 rounded w-fit uppercase">
-                          {format(log.createdAt, 'dd.MM HH:mm:ss')}
+                          {format(log.createdAt, 'dd.MM hh:mm:ss a')}
                         </div>
                       </td>
                       <td className="px-8 py-6">
