@@ -601,7 +601,7 @@ export default function Records() {
         <header className="mb-10">
           <div className="flex justify-between items-start mb-8">
             <div>
-              <h1 className="text-base font-bold text-text-primary uppercase tracking-tight leading-none">Journal Audit</h1>
+              <h1 className="text-base font-bold text-text-primary uppercase tracking-tight leading-none">Activity Records</h1>
               <p className="text-text-muted text-[13px] font-medium mt-2">Historical ledger and operational trace documentation</p>
             </div>
             <div className="flex gap-4 animate-fade-in">
@@ -1657,10 +1657,11 @@ export default function Records() {
             <div className="space-y-1 text-xs leading-relaxed text-red-800">
               <div className="font-extrabold uppercase tracking-wide">Administrative Warning & Context Logging</div>
               <p className="text-text-muted">
-                Audit results represent order records matching active filter range bounds: 
+                Audit results represent order records matching active filter date range bounds: 
                 <span className="font-bold text-text-primary font-mono ml-1 px-1.5 py-0.5 rounded bg-bg-surface border border-border-light">
                   {dateBounds.start ? format(dateBounds.start, 'dd MMM yyyy') : 'Beginning of records'} — {dateBounds.end ? format(dateBounds.end, 'dd MMM yyyy') : 'Present'}
                 </span>
+                You can change this Filter Date range by going back to Activity Records page.
               </p>
             </div>
           </div>
