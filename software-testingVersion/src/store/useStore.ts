@@ -9,6 +9,7 @@ import { MenuItem, Category, Order, OrderItem, RestaurantSettings, OrderType, In
 import { toast } from 'sonner';
 import { fireStore } from '../lib/firebase';
 import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings, getOrCreateDeviceId, computeChecksum, getRestaurantId } from '../services/licenseService';
+import { LicenseData } from '../utils/licenseValidator';
 import { getBusinessDate, initializeBusinessDayCutoff } from '../utils/businessDayCalculation';
 import { 
   doc, 
@@ -83,6 +84,12 @@ interface StoreState {
   subscription: SubscriptionSettings | null;
   activateLicense: (key: string) => Promise<void>;
   syncLicenses: () => Promise<void>;
+  licenseData: LicenseData | null;
+  isLicenseValid: boolean;
+  licenseError: string | null;
+  setLicenseData: (license: LicenseData) => void;
+  clearLicenseData: () => void;
+  checkLicenseValidity: () => Promise<boolean>;
 
   // Actions
   init: () => Promise<void>;
@@ -701,6 +708,31 @@ export const useStore = create<StoreState>((set, get) => ({
   lastAction: Date.now(),
   sidebarState: 'expanded',
   subscription: null,
+  licenseData: null,
+  isLicenseValid: false,
+  licenseError: null,
+  
+  setLicenseData: (license) => {
+    set({ licenseData: license, isLicenseValid: true })
+  },
+  
+  clearLicenseData: () => {
+    set({ 
+      licenseData: null, 
+      isLicenseValid: false,
+      licenseError: null 
+    })
+  },
+  
+  checkLicenseValidity: async () => {
+    const state = get()
+    if (!state.licenseData) return false
+    
+    const isExpired = 
+      Date.now() > state.licenseData.validUntil
+    
+    return !isExpired
+  },
   confirmModal: null,
   promptModal: null,
 
@@ -1348,8 +1380,17 @@ export const useStore = create<StoreState>((set, get) => ({
       return idStr;
     };
 
+    const getDocWithTimeout = (docRef: any, timeoutMs: number = 3000) => {
+      return Promise.race([
+        getDoc(docRef),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Firestore connection timeout')), timeoutMs)
+        )
+      ]);
+    };
+
     try {
-      const settingsSnap = await getDoc(doc(fireStore, 'restaurants', uid));
+      const settingsSnap = await getDocWithTimeout(doc(fireStore, 'restaurants', uid), 3000);
       if (settingsSnap.exists()) {
         console.log('Restaurants settings exist on Firestore. Restoring collections to local Dexie (first device migration)...');
         
@@ -1441,8 +1482,13 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     } catch (err: any) {
       console.warn('Initial sync check / migration failed or ran offline:', err.message);
-      if (err.message?.toLowerCase().includes('offline') || err.code === 'unavailable') {
+      if (err.message?.toLowerCase().includes('offline') || err.code === 'unavailable' || err.message?.toLowerCase().includes('timeout')) {
         set({ isOnline: false });
+        try {
+          await disableNetwork(fireStore);
+        } catch (networkErr) {
+          console.warn('Failed to disable Firestore network during fallback:', networkErr);
+        }
       }
     }
 

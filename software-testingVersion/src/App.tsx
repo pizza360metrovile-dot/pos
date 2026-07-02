@@ -4,7 +4,8 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Routes, Route, Link, useLocation } from 'react-router-dom'; // Removed HashRouter
+import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom'; // Removed HashRouter
+import { isTabVisible, getTabPath, getFirstVisibleTab } from './config/tabVisibility';
 import { 
   LayoutDashboard, 
   Utensils, 
@@ -18,7 +19,8 @@ import {
   ChevronLeft,
   X,
   Circle,
-  Wallet
+  Wallet,
+  TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -32,11 +34,14 @@ import { ShutdownScreen, MaintenanceScreen } from './components/KillSwitchScreen
 import POS from './pages/POS';
 import MenuManagement from './pages/MenuManagement';
 import Records from './pages/Records';
+import PerformanceTab from './pages/Performance';
 import SettingsPage from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Login from './components/Login';
 import LicenseLockScreen from './components/LicenseLockScreen';
+import LicenseModal from './components/LicenseModal';
+import { checkDeviceLicense } from './services/licenseService';
 import { db } from './lib/db';
 
 function cn(...inputs: ClassValue[]) {
@@ -47,10 +52,11 @@ const navItems = [
   { id: 'pos', icon: LayoutDashboard, label: 'POS', path: '/' },
   { id: 'menu', icon: Utensils, label: 'Menu', path: '/menu' },
   { id: 'records', icon: History, label: 'Records', path: '/records' },
+  { id: 'performance', icon: TrendingUp, label: 'Performance', path: '/performance' },
   { id: 'inventory', icon: Package, label: 'Inventory', path: '/inventory' },
   { id: 'expenses', icon: Wallet, label: 'Expenses', path: '/expenses' },
   { id: 'settings', icon: Settings, label: 'Settings', path: '/settings' },
-];
+].filter(item => isTabVisible(item.id as any));
 
 const Sidebar = ({ 
   isOpen, 
@@ -384,10 +390,27 @@ export default function App() {
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const [isMobileMode, setIsMobileMode] = useState(false);
 
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [licenseCheckDone, setLicenseCheckDone] = useState(false);
+  const isLicenseValid = useStore(state => state.isLicenseValid);
+  const licenseData = useStore(state => state.licenseData);
+
   const [licenseStatus, setLicenseStatus] = useState<'active' | 'locked'>('locked');
   const [licenseDaysLeft, setLicenseDaysLeft] = useState<number>(0);
 
   const checkLicenseStatus = (settings: any) => {
+    // Check Firebase/store license status first
+    const isLicenseValidInStore = useStore.getState().isLicenseValid;
+    const licenseDataInStore = useStore.getState().licenseData;
+
+    if (isLicenseValidInStore && licenseDataInStore) {
+      setLicenseStatus('active');
+      const diffTime = licenseDataInStore.validUntil - Date.now();
+      const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      setLicenseDaysLeft(Math.max(0, daysLeft));
+      return;
+    }
+
     // If no expiry is found, treat as EXPIRED (Locked)
     if (!settings?.licenseExpiry) {
         setLicenseStatus('locked');
@@ -411,7 +434,26 @@ export default function App() {
 
   useEffect(() => {
     checkLicenseStatus(settings);
-  }, [settings?.licenseExpiry]);
+  }, [settings?.licenseExpiry, isLicenseValid, licenseData]);
+
+  useEffect(() => {
+    const validateLicense = async () => {
+      const result = await checkDeviceLicense();
+      
+      if (!result.isValid) {
+        setShowLicenseModal(true);
+      } else if (result.license) {
+        useStore.setState({ 
+          licenseData: result.license,
+          isLicenseValid: true
+        });
+      }
+      
+      setLicenseCheckDone(true);
+    };
+    
+    validateLicense();
+  }, []);
 
   useEffect(() => {
     init();
@@ -529,6 +571,41 @@ export default function App() {
     );
   }
 
+  if (!licenseCheckDone) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-bg-app">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-accent rounded-lg flex items-center justify-center text-white font-black text-xl shadow-xl shadow-accent/20 animate-bounce">
+            LB
+          </div>
+          <div className="text-text-primary font-mono text-[10px] tracking-[0.5em] animate-pulse uppercase">
+            Checking license...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showLicenseModal) {
+    return (
+      <div className="h-screen w-screen bg-bg-app overflow-hidden flex items-center justify-center">
+        <LicenseModal
+          isOpen={showLicenseModal}
+          onLicenseValid={(license) => {
+            useStore.setState({ 
+              licenseData: license,
+              isLicenseValid: true
+            });
+            setShowLicenseModal(false);
+            setLicenseCheckDone(true);
+          }}
+        />
+        <Toaster position="top-right" theme="light" richColors />
+        <GlobalModals />
+      </div>
+    );
+  }
+
   // 1. License expired / not activated
   if (licenseStatus === 'locked') {
     return (
@@ -611,12 +688,14 @@ export default function App() {
         />
         <main className="flex-1 overflow-auto relative custom-scrollbar">
           <Routes>
-            <Route path="/" element={<POS />} />
-            <Route path="/menu" element={<MenuManagement />} />
-            <Route path="/inventory" element={<Inventory />} />
-            <Route path="/records" element={<Records />} />
-            <Route path="/expenses" element={<Expenses />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            {isTabVisible('pos') && <Route path="/" element={<POS />} />}
+            {isTabVisible('menu') && <Route path="/menu" element={<MenuManagement />} />}
+            {isTabVisible('inventory') && <Route path="/inventory" element={<Inventory />} />}
+            {isTabVisible('records') && <Route path="/records" element={<Records />} />}
+            {isTabVisible('performance') && <Route path="/performance" element={<PerformanceTab />} />}
+            {isTabVisible('expenses') && <Route path="/expenses" element={<Expenses />} />}
+            {isTabVisible('settings') && <Route path="/settings" element={<SettingsPage />} />}
+            <Route path="*" element={<Navigate to={getTabPath(getFirstVisibleTab())} replace />} />
           </Routes>
         </main>
       </div>

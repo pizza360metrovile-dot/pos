@@ -349,26 +349,26 @@ export default function Expenses() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4 md:space-y-6">
       {/* Header Panel */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-gray-100 pb-5">
         <div>
-          <h2 id="expenses-header" className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
-            <Wallet className="h-6 w-6 text-gray-700" />
+          <h2 id="expenses-header" className="text-xl md:text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
+            <Wallet className="h-5 w-5 md:h-6 md:w-6 text-gray-700" />
             Expenses Management
           </h2>
-          <p className="text-sm text-gray-500 mt-1">Track restaurant operations, utilities, material acquisitions, and general expenditures.</p>
+          <p className="text-xs md:text-sm text-gray-500 mt-1">Track restaurant operations, utilities, material acquisitions, and general expenditures.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-row flex-wrap gap-2">
           <button
             onClick={() => setIsCategoryManagerOpen(true)}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+            className="flex-1 sm:flex-initial px-3 py-2 border border-gray-300 rounded-lg text-xs md:text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
           >
             Manage Categories
           </button>
           <button
             onClick={openAddModal}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors shadow-sm"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-xs md:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors shadow-sm"
           >
             <Plus className="h-4 w-4" />
             Add Expense
@@ -377,50 +377,50 @@ export default function Expenses() {
       </div>
 
       {/* Zone 1 — Summary Stats Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div id="stat-total" className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Total Expenses</p>
-            <h3 className="text-2xl font-bold text-gray-900">{formatCurrency(stats.total)}</h3>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <div id="stat-total" className="bg-white border border-gray-200 rounded-xl p-3 md:p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+          <div className="space-y-0.5 md:space-y-1">
+            <p className="text-[10px] md:text-xs font-semibold uppercase tracking-wider text-gray-400">Total Expenses</p>
+            <h3 className="text-lg md:text-2xl font-bold text-gray-900">{formatCurrency(stats.total)}</h3>
           </div>
-          <div className="p-3 bg-red-50 text-red-600 rounded-lg border border-red-100">
-            <TrendingUp className="h-6 w-6" />
-          </div>
-        </div>
-
-        <div id="stat-entries" className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Entries Count</p>
-            <h3 className="text-2xl font-bold text-gray-900">{stats.count}</h3>
-          </div>
-          <div className="p-3 bg-slate-50 text-slate-600 rounded-lg border border-slate-100">
-            <Hash className="h-6 w-6" />
+          <div className="p-2 md:p-3 bg-red-50 text-red-600 rounded-lg border border-red-100 shrink-0">
+            <TrendingUp className="h-4 w-4 md:h-6 md:w-6" />
           </div>
         </div>
 
-        <div id="stat-highest" className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Highest Entry</p>
-            <h3 className="text-2xl font-bold text-gray-900">{formatCurrency(stats.highest)}</h3>
+        <div id="stat-entries" className="bg-white border border-gray-200 rounded-xl p-3 md:p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+          <div className="space-y-0.5 md:space-y-1">
+            <p className="text-[10px] md:text-xs font-semibold uppercase tracking-wider text-gray-400">Entries Count</p>
+            <h3 className="text-lg md:text-2xl font-bold text-gray-900">{stats.count}</h3>
           </div>
-          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100">
-            <Coins className="h-6 w-6" />
+          <div className="p-2 md:p-3 bg-slate-50 text-slate-600 rounded-lg border border-slate-100 shrink-0">
+            <Hash className="h-4 w-4 md:h-6 md:w-6" />
           </div>
         </div>
 
-        <div id="stat-average" className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Average Expense</p>
-            <h3 className="text-2xl font-bold text-gray-900">{formatCurrency(stats.average)}</h3>
+        <div id="stat-highest" className="bg-white border border-gray-200 rounded-xl p-3 md:p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+          <div className="space-y-0.5 md:space-y-1">
+            <p className="text-[10px] md:text-xs font-semibold uppercase tracking-wider text-gray-400">Highest Entry</p>
+            <h3 className="text-lg md:text-2xl font-bold text-gray-900">{formatCurrency(stats.highest)}</h3>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-100">
-            <BarChart className="h-6 w-6" />
+          <div className="p-2 md:p-3 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100 shrink-0">
+            <Coins className="h-4 w-4 md:h-6 md:w-6" />
+          </div>
+        </div>
+
+        <div id="stat-average" className="bg-white border border-gray-200 rounded-xl p-3 md:p-5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+          <div className="space-y-0.5 md:space-y-1">
+            <p className="text-[10px] md:text-xs font-semibold uppercase tracking-wider text-gray-400">Average Expense</p>
+            <h3 className="text-lg md:text-2xl font-bold text-gray-900">{formatCurrency(stats.average)}</h3>
+          </div>
+          <div className="p-2 md:p-3 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-100 shrink-0">
+            <BarChart className="h-4 w-4 md:h-6 md:w-6" />
           </div>
         </div>
       </div>
 
       {/* Zone 2 — Filters + Search Bar */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm gap-4 space-y-4">
+      <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-5 shadow-sm gap-4 space-y-4">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
           {/* Query Search */}
           <div className="lg:col-span-4 relative">
@@ -452,13 +452,13 @@ export default function Expenses() {
           </div>
 
           {/* Date range shortcuts */}
-          <div className="lg:col-span-5 flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
+          <div className="lg:col-span-5 flex overflow-x-auto max-w-full whitespace-nowrap scrollbar-none gap-1 bg-gray-100 p-1 rounded-lg select-none">
             {(['All', 'Today', 'Yesterday', 'This Week', 'This Month', 'Custom'] as DateShortcut[]).map((sc) => (
               <button
                 key={sc}
                 onClick={() => setDateShortcut(sc)}
                 className={clsx(
-                  "flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
+                  "flex-none sm:flex-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap",
                   dateShortcut === sc
                     ? "bg-white text-gray-950 shadow-sm"
                     : "text-gray-500 hover:text-gray-900 hover:bg-white/50"
@@ -542,65 +542,115 @@ export default function Expenses() {
             <p className="text-xs text-gray-400 leading-relaxed">Adjust your active filter criteria or click the button above to record your first operational expense entry.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-left">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date & Time</th>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Notes/Details</th>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Amount</th>
-                  <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-150">
-                {filteredExpenses.map((exp) => {
-                  const cat = expenseCategories.find(c => Number(c.id) === Number(exp.categoryId));
-                  const badgeStyle = getCategoryBadgeStyle(cat?.name || 'Other');
-                  return (
-                    <tr key={exp.id} className="hover:bg-slate-50 transition-colors group">
-                      <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500 font-medium">
-                        {format(new Date(exp.date), 'dd MMM yyyy, hh:mm a')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                        {exp.title}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-xs">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${badgeStyle.bg}`}>
+          <>
+            {/* Mobile Cards View */}
+            <div className="block md:hidden divide-y divide-gray-100">
+              {filteredExpenses.map((exp) => {
+                const cat = expenseCategories.find(c => Number(c.id) === Number(exp.categoryId));
+                const badgeStyle = getCategoryBadgeStyle(cat?.name || 'Other');
+                return (
+                  <div key={exp.id} className="p-4 flex flex-col gap-2.5">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="text-sm font-bold text-gray-900">{exp.title}</div>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-1.5 ${badgeStyle.bg}`}>
                           {cat?.name || 'Other'}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 space-y-0.5 text-xs text-gray-500 max-w-xs truncate" title={exp.notes}>
-                        {exp.notes ? exp.notes : <span className="text-gray-300 italic">None</span>}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-red-600 text-right">
-                        {formatCurrency(exp.amount)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-xs font-medium">
-                        <div className="flex items-center justify-center gap-3">
-                          <button
-                            onClick={() => openEditModal(exp)}
-                            className="text-gray-400 hover:text-gray-900 transition-colors"
-                            title="Edit Expense"
-                          >
-                            <Edit3 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => triggerDeleteExpense(exp.id!)}
-                            className="text-gray-400 hover:text-red-600 transition-colors"
-                            title="Delete Expense"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-bold text-red-600">{formatCurrency(exp.amount)}</div>
+                        <div className="text-[10px] text-gray-400 mt-1 font-medium">
+                          {format(new Date(exp.date), 'dd MMM, hh:mm a')}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    </div>
+                    
+                    {exp.notes && (
+                      <div className="text-xs text-gray-500 bg-gray-50/75 border border-gray-100/50 rounded-lg p-2.5 mt-1 leading-relaxed">
+                        {exp.notes}
+                      </div>
+                    )}
+                    
+                    <div className="flex justify-end gap-3 pt-2.5 border-t border-gray-100/50 mt-1">
+                      <button
+                        onClick={() => openEditModal(exp)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors bg-gray-50 border border-gray-200 rounded-lg"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      <button
+                        onClick={() => triggerDeleteExpense(exp.id!)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50/50 transition-colors bg-red-50/30 border border-red-100 rounded-lg"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-left">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date & Time</th>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Notes/Details</th>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Amount</th>
+                    <th scope="col" className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-150">
+                  {filteredExpenses.map((exp) => {
+                    const cat = expenseCategories.find(c => Number(c.id) === Number(exp.categoryId));
+                    const badgeStyle = getCategoryBadgeStyle(cat?.name || 'Other');
+                    return (
+                      <tr key={exp.id} className="hover:bg-slate-50 transition-colors group">
+                        <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500 font-medium">
+                          {format(new Date(exp.date), 'dd MMM yyyy, hh:mm a')}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                          {exp.title}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-xs">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${badgeStyle.bg}`}>
+                            {cat?.name || 'Other'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 space-y-0.5 text-xs text-gray-500 max-w-xs truncate" title={exp.notes}>
+                          {exp.notes ? exp.notes : <span className="text-gray-300 italic">None</span>}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-red-600 text-right">
+                          {formatCurrency(exp.amount)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-xs font-medium">
+                          <div className="flex items-center justify-center gap-3">
+                            <button
+                              onClick={() => openEditModal(exp)}
+                              className="text-gray-400 hover:text-gray-900 transition-colors"
+                              title="Edit Expense"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => triggerDeleteExpense(exp.id!)}
+                              className="text-gray-400 hover:text-red-600 transition-colors"
+                              title="Delete Expense"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

@@ -7,6 +7,7 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import { fireStore } from '../lib/firebase';
 import { db } from '../lib/db';
 import { useStore } from '../store/useStore';
+import { isTabVisible } from '../config/tabVisibility';
 
 const unsubs: (() => void)[] = [];
 
@@ -136,25 +137,57 @@ export async function initAllListeners(uid: string) {
 
   console.log(`Initializing all real-time Firestore listeners for UID: ${uid}...`);
 
-  const collectionsToSync = [
-    { name: 'orders', table: db.orders },
-    { name: 'orderItems', table: db.orderItems },
-    { name: 'orderItemModifiers', table: db.orderItemModifiers },
-    { name: 'dealOrderComponents', table: db.dealOrderComponents },
-    { name: 'kotSnapshots', table: db.kotSnapshots },
-    { name: 'menuItems', table: db.menuItems },
-    { name: 'categories', table: db.categories },
-    { name: 'modifierGroups', table: db.modifierGroups },
-    { name: 'modifierOptions', table: db.modifierOptions },
-    { name: 'dealItems', table: db.dealItems },
-    { name: 'ingredients', table: db.ingredients },
-    { name: 'recipes', table: db.recipes },
-    { name: 'recipeItems', table: db.recipeItems },
-    { name: 'stockLog', table: db.stockLog },
-    { name: 'settings', table: db.settings },
-    { name: 'expenses', table: db.expenses },
-    { name: 'expenseCategories', table: db.expenseCategories }
-  ];
+  const isPosVisible = isTabVisible('pos');
+  const isMenuVisible = isTabVisible('menu');
+  const isRecordsVisible = isTabVisible('records');
+  const isPerformanceVisible = isTabVisible('performance');
+  const isInventoryVisible = isTabVisible('inventory');
+  const isExpensesVisible = isTabVisible('expenses');
+
+  const collectionsToSync: Array<{ name: string; table: any }> = [];
+
+  // Core app settings always needed
+  collectionsToSync.push({ name: 'settings', table: db.settings });
+
+  // Order collections (needed for POS, Records, and Performance)
+  if (isPosVisible || isRecordsVisible || isPerformanceVisible) {
+    collectionsToSync.push(
+      { name: 'orders', table: db.orders },
+      { name: 'orderItems', table: db.orderItems },
+      { name: 'orderItemModifiers', table: db.orderItemModifiers },
+      { name: 'dealOrderComponents', table: db.dealOrderComponents },
+      { name: 'kotSnapshots', table: db.kotSnapshots }
+    );
+  }
+
+  // Menu items and categories (needed for POS or Menu management)
+  if (isPosVisible || isMenuVisible) {
+    collectionsToSync.push(
+      { name: 'menuItems', table: db.menuItems },
+      { name: 'categories', table: db.categories },
+      { name: 'modifierGroups', table: db.modifierGroups },
+      { name: 'modifierOptions', table: db.modifierOptions },
+      { name: 'dealItems', table: db.dealItems }
+    );
+  }
+
+  // Inventory collections (needed for Inventory)
+  if (isInventoryVisible) {
+    collectionsToSync.push(
+      { name: 'ingredients', table: db.ingredients },
+      { name: 'recipes', table: db.recipes },
+      { name: 'recipeItems', table: db.recipeItems },
+      { name: 'stockLog', table: db.stockLog }
+    );
+  }
+
+  // Expenses collections (needed for Expenses)
+  if (isExpensesVisible) {
+    collectionsToSync.push(
+      { name: 'expenses', table: db.expenses },
+      { name: 'expenseCategories', table: db.expenseCategories }
+    );
+  }
 
   collectionsToSync.forEach(col => {
     const unsub = onSnapshot(

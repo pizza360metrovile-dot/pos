@@ -19,7 +19,7 @@ export const TAB_VISIBILITY = {
   records: true,
   
   // Performance Analytics — Revenue charts and metrics
-  performance: true,
+  performance: false,
   
   // Inventory Management — Stock tracking
   inventory: true,

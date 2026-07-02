@@ -5,7 +5,8 @@
 
 import { db } from '../lib/db';
 import { fireStore } from '../lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { LicenseData } from '../utils/licenseValidator';
 
 export const SECRET_SALT = "78R4JHGFpizza360metrovileEWIUH34@12<D>";
 
@@ -237,4 +238,108 @@ export async function generateTestingKey(restaurantId: string, timestamp: number
   const expectedMessage = restaurantId + String(timestamp) + SECRET_SALT;
   const signature = await hashSHA256(expectedMessage);
   return btoa(`${timestamp}:${signature}`);
+}
+
+const uid = 'operator-1'; // Or get from auth
+
+/**
+ * Fetch license data from Firebase
+ */
+export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
+  try {
+    if (!fireStore) {
+      console.warn('Firestore is not initialized. Cannot fetch license.');
+      return null;
+    }
+    const restaurantDoc = doc(fireStore, 'restaurants', uid);
+    const docSnap = await getDoc(restaurantDoc);
+    
+    if (docSnap.exists() && docSnap.data().license) {
+      return docSnap.data().license as LicenseData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Failed to fetch license from Firebase:', error);
+    return null;
+  }
+}
+
+/**
+ * Save license to Firebase
+ */
+export async function saveLicenseToFirebase(
+  license: LicenseData
+): Promise<boolean> {
+  try {
+    if (!fireStore) {
+      console.warn('Firestore is not initialized. Cannot save license.');
+      return false;
+    }
+    const restaurantDoc = doc(fireStore, 'restaurants', uid);
+    
+    const docSnap = await getDoc(restaurantDoc);
+    if (!docSnap.exists()) {
+      await setDoc(restaurantDoc, {
+        license: license,
+        licenseUpdatedAt: serverTimestamp(),
+        createdAt: serverTimestamp()
+      });
+    } else {
+      await updateDoc(restaurantDoc, {
+        license: license,
+        licenseUpdatedAt: serverTimestamp(),
+      });
+    }
+    
+    console.log('License saved to Firebase:', license.licenseKey);
+    return true;
+  } catch (error) {
+    console.error('Failed to save license to Firebase:', error);
+    return false;
+  }
+}
+
+/**
+ * Check if device has valid license
+ */
+export async function checkDeviceLicense(): Promise<{
+  isValid: boolean
+  license?: LicenseData
+  message: string
+}> {
+  try {
+    // Fetch from Firebase
+    const firebaseLicense = await fetchLicenseFromFirebase();
+    
+    if (!firebaseLicense) {
+      return {
+        isValid: false,
+        message: 'No license found. Please enter license key.'
+      };
+    }
+    
+    // Check expiration
+    const isExpired = Date.now() > firebaseLicense.validUntil;
+    
+    if (isExpired) {
+      return {
+        isValid: false,
+        message: 'License expired. Please renew.'
+      };
+    }
+    
+    // License valid
+    return {
+      isValid: true,
+      license: firebaseLicense,
+      message: 'License valid'
+    };
+  } catch (error) {
+    console.error('License check failed:', error);
+    return {
+      isValid: false,
+      message: 'License verification failed'
+    };
+  }
 }

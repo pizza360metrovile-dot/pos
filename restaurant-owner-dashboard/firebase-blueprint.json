@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "UsedLicenseKey": {
+      "title": "Used License Key",
+      "description": "Tracks verified cryptographic license key signatures that have been used to prevent multi-instance replays.",
+      "type": "object",
+      "properties": {
+        "signature": {
+          "type": "string",
+          "description": "The cryptographic signature verified locally and uploaded for registration."
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "The timestamp string associated with signature verification."
+        },
+        "restaurantId": {
+          "type": "string",
+          "description": "The unique registered name/ID of the restaurant POS."
+        },
+        "syncedAt": {
+          "type": "number",
+          "description": "Timestamp in ms of when the key was synchronized to Firestore."
+        }
+      },
+      "required": [
+        "signature",
+        "timestamp",
+        "restaurantId",
+        "syncedAt"
+      ]
+    },
+    "SubscriptionSettings": {
+      "title": "Subscription Settings",
+      "description": "Holds centralized licensing subscription settings for each POS.",
+      "type": "object",
+      "properties": {
+        "restaurantId": {
+          "type": "string",
+          "description": "The unique registered name/ID of the restaurant POS."
+        },
+        "expiryDate": {
+          "type": "number",
+          "description": "License subscription expiry date represented as a millisecond epoch."
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp in ms of when settings were updated."
+        }
+      },
+      "required": [
+        "restaurantId",
+        "expiryDate",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/used_license_keys/{signature}": {
+      "schema": "UsedLicenseKey",
+      "description": "Collection registering used licensing key signatures."
+    },
+    "/subscriptionSettings/{restaurantId}": {
+      "schema": "SubscriptionSettings",
+      "description": "Collection tracking POS license subscription settings."
+    }
+  }
+}

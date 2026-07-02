@@ -186,20 +186,20 @@ export default function Inventory() {
 
   return (
     <div className="h-full flex flex-col bg-bg-app overflow-y-auto custom-scrollbar">
-      <header className="p-8 pb-4 shrink-0">
-        <div className="flex justify-between items-start mb-8">
+      <header className="p-4 md:p-8 md:pb-4 shrink-0">
+        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 mb-8">
           <div>
             <h1 className="text-base font-bold text-text-primary uppercase tracking-tight">Logistics Core</h1>
             <p className="text-text-muted text-[13px] font-medium mt-1">Inventory management, dynamic yields, and audit logs</p>
           </div>
-          <div className="flex gap-4">
-             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light">
+          <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
+             <div className="flex bg-bg-surface-2 rounded-lg p-1 border border-border-light overflow-x-auto max-w-full whitespace-nowrap scrollbar-none select-none">
                 {(['ingredients', 'direct-stock', 'recipes', 'logs'] as Tab[]).map(tab => (
                    <button
                     key={tab}
                     onClick={() => { setActiveTab(tab); setSearchTerm(''); }}
                     className={clsx(
-                      "px-6 py-2 rounded-md text-[11px] font-bold uppercase tracking-tight transition-all",
+                      "px-4 md:px-6 py-2 rounded-md text-[11px] font-bold uppercase tracking-tight transition-all whitespace-nowrap",
                       activeTab === tab ? "bg-bg-surface text-accent shadow-sm border border-border-light" : "text-text-muted hover:text-text-secondary"
                     )}
                   >
@@ -210,7 +210,7 @@ export default function Inventory() {
              {activeTab === 'ingredients' && (
                <button 
                 onClick={() => { setEditingIngredient(null); setIsIngredientModalOpen(true); }}
-                className="btn-primary"
+                className="btn-primary w-full sm:w-auto justify-center"
                >
                  <Plus className="w-5 h-5 mr-2" /> Add Material
                </button>
@@ -218,41 +218,41 @@ export default function Inventory() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="card-main p-6 flex items-center gap-5">
-             <div className="w-12 h-12 rounded-lg bg-accent-light flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-accent" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mb-8">
+          <div className="card-main p-3 md:p-6 flex items-center gap-3 md:gap-5">
+             <div className="w-8 h-8 md:w-12 md:h-12 rounded-lg bg-accent-light flex items-center justify-center shrink-0">
+                <TrendingUp className="w-4 h-4 md:w-6 md:h-6 text-accent" />
              </div>
              <div>
-                <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">Asset Evaluation</div>
-                <div className="text-xl font-extrabold text-text-primary font-mono tracking-tight">${stats.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                <div className="text-[10px] md:text-[11px] font-bold text-text-muted uppercase tracking-wider mb-0.5 md:mb-1">Asset Value</div>
+                <div className="text-base md:text-xl font-extrabold text-text-primary font-mono tracking-tight">${stats.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
              </div>
           </div>
-          <div className="card-main p-6 flex items-center gap-5">
-             <div className="w-12 h-12 rounded-lg bg-info-light flex items-center justify-center">
-                <PackageCheck className="w-6 h-6 text-info" />
+          <div className="card-main p-3 md:p-6 flex items-center gap-3 md:gap-5">
+             <div className="w-8 h-8 md:w-12 md:h-12 rounded-lg bg-info-light flex items-center justify-center shrink-0">
+                <PackageCheck className="w-4 h-4 md:w-6 md:h-6 text-info" />
              </div>
              <div>
-                <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">Total Registry</div>
-                <div className="text-xl font-extrabold text-text-primary font-mono tracking-tight">{ingredients.length}</div>
+                <div className="text-[10px] md:text-[11px] font-bold text-text-muted uppercase tracking-wider mb-0.5 md:mb-1">Registry</div>
+                <div className="text-base md:text-xl font-extrabold text-text-primary font-mono tracking-tight">{ingredients.length}</div>
              </div>
           </div>
-          <div className="card-main p-6 flex items-center gap-5 border-l-4 border-l-warning">
-             <div className="w-12 h-12 rounded-lg bg-warning-light flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-warning" />
+          <div className="card-main p-3 md:p-6 flex items-center gap-3 md:gap-5 border-l-4 border-l-warning">
+             <div className="w-8 h-8 md:w-12 md:h-12 rounded-lg bg-warning-light flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-4 h-4 md:w-6 md:h-6 text-warning" />
              </div>
              <div>
-                <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">Floor Alerts</div>
-                <div className="text-xl font-extrabold text-text-primary font-mono tracking-tight">{stats.low}</div>
+                <div className="text-[10px] md:text-[11px] font-bold text-text-muted uppercase tracking-wider mb-0.5 md:mb-1">Floor Alerts</div>
+                <div className="text-base md:text-xl font-extrabold text-text-primary font-mono tracking-tight">{stats.low}</div>
              </div>
           </div>
-          <div className="card-main p-6 flex items-center gap-5 border-l-4 border-l-danger">
-             <div className="w-12 h-12 rounded-lg bg-danger-light flex items-center justify-center">
-                <PackageOpen className="w-6 h-6 text-danger" />
+          <div className="card-main p-3 md:p-6 flex items-center gap-3 md:gap-5 border-l-4 border-l-danger">
+             <div className="w-8 h-8 md:w-12 md:h-12 rounded-lg bg-danger-light flex items-center justify-center shrink-0">
+                <PackageOpen className="w-4 h-4 md:w-6 md:h-6 text-danger" />
              </div>
              <div>
-                <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">Critical Zero</div>
-                <div className="text-xl font-extrabold text-text-primary font-mono tracking-tight">{stats.out}</div>
+                <div className="text-[10px] md:text-[11px] font-bold text-text-muted uppercase tracking-wider mb-0.5 md:mb-1">Critical Zero</div>
+                <div className="text-base md:text-xl font-extrabold text-text-primary font-mono tracking-tight">{stats.out}</div>
              </div>
           </div>
         </div>
@@ -292,138 +292,258 @@ export default function Inventory() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto px-8 pb-8 custom-scrollbar">
+      <div className="flex-1 overflow-auto p-4 md:px-8 md:pb-8 custom-scrollbar">
         <div className="card-main overflow-hidden shadow-md">
           {activeTab === 'ingredients' && (
-            <table className="table-main">
-              <thead>
-                <tr>
-                  <th className="px-8 py-5">Nomenclature</th>
-                  <th className="px-8 py-5">Scale Status</th>
-                  <th className="px-8 py-5">Floor Ratio</th>
-                  <th className="px-8 py-5">Internal Cost</th>
-                  <th className="px-8 py-5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-light">
+            <>
+              {/* Mobile Cards View */}
+              <div className="block md:hidden space-y-3 p-1">
                 {filteredIngredients.map(i => {
                   const status = i.currentStock < 0 ? 'Negative' : i.currentStock === 0 ? 'Out' : i.currentStock <= i.reorderThreshold ? 'Low' : 'OK';
                   return (
-                    <tr key={i.id} className="hover:bg-bg-surface-2 group transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{i.name}</div>
-                        <div className="text-[11px] text-text-muted font-medium uppercase mt-1 tracking-wider">{i.unit} Base Scale</div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-4">
-                          <span className={clsx(
-                            "badge sm",
-                            status === 'OK' && "badge-success",
-                            status === 'Low' && "badge-warning",
-                            status === 'Negative' && "bg-rose-500/10 text-rose-500 border border-rose-500/35",
-                            status === 'Out' && "badge-danger"
-                          )}>
-                            {status === 'OK' ? 'Sufficient' : status === 'Low' ? 'Restock Soon' : status === 'Negative' ? 'Negative Deficit' : 'Depleted'}
-                          </span>
-                          <div className={clsx(
-                            "font-mono text-sm font-bold",
-                            i.currentStock < 0 ? "text-rose-500" : "text-text-primary"
-                          )}>
+                    <div key={i.id} className="p-4 bg-bg-surface border border-border-light rounded-xl flex flex-col gap-3 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{i.name}</div>
+                          <div className="text-[10px] text-text-muted font-mono uppercase mt-0.5 tracking-wider">{i.unit} Scale</div>
+                        </div>
+                        <span className={clsx(
+                          "badge sm text-[9px]",
+                          status === 'OK' && "badge-success",
+                          status === 'Low' && "badge-warning",
+                          status === 'Negative' && "bg-rose-500/10 text-rose-500 border border-rose-500/35",
+                          status === 'Out' && "badge-danger"
+                        )}>
+                          {status === 'OK' ? 'Sufficient' : status === 'Low' ? 'Low Stock' : status === 'Negative' ? 'Negative Deficit' : 'Depleted'}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-border-light/50 font-mono">
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder">Stock</span>
+                          <div className={clsx("font-bold text-[11px]", i.currentStock < 0 ? "text-rose-500" : "text-text-primary")}>
                             {i.currentStock} {i.unit}
                           </div>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="text-[11px] text-text-muted font-bold uppercase tracking-wider flex items-center gap-2">
-                           Minimum: <span className="text-text-primary font-mono">{i.reorderThreshold}</span>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder">Min Limit</span>
+                          <div className="font-bold text-[11px] text-text-primary">{i.reorderThreshold} {i.unit}</div>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                         <div className="text-sm font-mono text-accent font-bold">${(i.costPerUnit || 0).toFixed(2)}</div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button 
-                            onClick={() => { setRestockItem(i); setIsRestockModalOpen(true); }}
-                            className="p-2.5 bg-bg-surface border border-border-light rounded-md text-success hover:bg-success-light hover:border-success-border transition-all shadow-sm active:scale-95"
-                           >
-                              <ArrowRightLeft className="w-4 h-4" />
-                           </button>
-                           <button 
-                            onClick={() => { setEditingIngredient(i); setIsIngredientModalOpen(true); }}
-                            className="p-2.5 bg-bg-surface border border-border-light rounded-md text-text-muted hover:text-text-primary transition-all shadow-sm active:scale-95"
-                           >
-                              <Edit3 className="w-4 h-4" />
-                           </button>
-                           <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              deleteIngredient(i.id);
-                            }}
-                            className="relative z-10 p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
-                           >
-                              <Trash2 className="w-4 h-4" />
-                           </button>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder">Cost/Unit</span>
+                          <div className="font-bold text-[11px] text-accent">${(i.costPerUnit || 0).toFixed(2)}</div>
                         </div>
-                      </td>
-                    </tr>
-                  )
+                      </div>
+                      
+                      <div className="flex justify-end gap-2 pt-2 border-t border-border-light/50">
+                        <button 
+                          onClick={() => { setRestockItem(i); setIsRestockModalOpen(true); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-surface border border-border-light rounded-lg text-success hover:bg-success/5 transition-all text-[10px] font-bold uppercase tracking-wider"
+                        >
+                          <ArrowRightLeft className="w-3.5 h-3.5" /> REPLENISH
+                        </button>
+                        <button 
+                          onClick={() => { setEditingIngredient(i); setIsIngredientModalOpen(true); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-surface border border-border-light rounded-lg text-text-muted hover:bg-bg-surface-2 transition-all text-[10px] font-bold uppercase tracking-wider"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> EDIT
+                        </button>
+                        <button 
+                          onClick={() => deleteIngredient(i.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-danger-light border border-danger-border rounded-lg text-danger hover:bg-danger hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> DELETE
+                        </button>
+                      </div>
+                    </div>
+                  );
                 })}
-              </tbody>
-            </table>
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto w-full">
+                <table className="table-main">
+                  <thead>
+                    <tr>
+                      <th className="px-8 py-5">Nomenclature</th>
+                      <th className="px-8 py-5">Scale Status</th>
+                      <th className="px-8 py-5">Floor Ratio</th>
+                      <th className="px-8 py-5">Internal Cost</th>
+                      <th className="px-8 py-5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border-light">
+                    {filteredIngredients.map(i => {
+                      const status = i.currentStock < 0 ? 'Negative' : i.currentStock === 0 ? 'Out' : i.currentStock <= i.reorderThreshold ? 'Low' : 'OK';
+                      return (
+                        <tr key={i.id} className="hover:bg-bg-surface-2 group transition-colors">
+                          <td className="px-8 py-6">
+                            <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{i.name}</div>
+                            <div className="text-[11px] text-text-muted font-medium uppercase mt-1 tracking-wider">{i.unit} Base Scale</div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <span className={clsx(
+                                "badge sm",
+                                status === 'OK' && "badge-success",
+                                status === 'Low' && "badge-warning",
+                                status === 'Negative' && "bg-rose-500/10 text-rose-500 border border-rose-500/35",
+                                status === 'Out' && "badge-danger"
+                              )}>
+                                {status === 'OK' ? 'Sufficient' : status === 'Low' ? 'Restock Soon' : status === 'Negative' ? 'Negative Deficit' : 'Depleted'}
+                              </span>
+                              <div className={clsx(
+                                "font-mono text-sm font-bold",
+                                i.currentStock < 0 ? "text-rose-500" : "text-text-primary"
+                              )}>
+                                {i.currentStock} {i.unit}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="text-[11px] text-text-muted font-bold uppercase tracking-wider flex items-center gap-2">
+                               Minimum: <span className="text-text-primary font-mono">{i.reorderThreshold}</span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                             <div className="text-sm font-mono text-accent font-bold">${(i.costPerUnit || 0).toFixed(2)}</div>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                               <button 
+                                onClick={() => { setRestockItem(i); setIsRestockModalOpen(true); }}
+                                className="p-2.5 bg-bg-surface border border-border-light rounded-md text-success hover:bg-success-light hover:border-success-border transition-all shadow-sm active:scale-95"
+                               >
+                                  <ArrowRightLeft className="w-4 h-4" />
+                               </button>
+                               <button 
+                                onClick={() => { setEditingIngredient(i); setIsIngredientModalOpen(true); }}
+                                className="p-2.5 bg-bg-surface border border-border-light rounded-md text-text-muted hover:text-text-primary transition-all shadow-sm active:scale-95"
+                               >
+                                  <Edit3 className="w-4 h-4" />
+                               </button>
+                               <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  deleteIngredient(i.id);
+                                }}
+                                className="relative z-10 p-2.5 bg-danger-light border border-danger-border rounded-md text-danger hover:bg-danger transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto"
+                               >
+                                  <Trash2 className="w-4 h-4" />
+                               </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {activeTab === 'direct-stock' && (
-            <table className="table-main">
-              <thead>
-                <tr>
-                  <th className="px-8 py-5">Packaged Asset</th>
-                  <th className="px-8 py-5">Classification</th>
-                  <th className="px-8 py-5">Volume State</th>
-                  <th className="px-8 py-5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-light">
+            <>
+              {/* Mobile Direct Stock Cards */}
+              <div className="block md:hidden space-y-3 p-1">
                 {stockedItems.map(item => {
                   const status = item.directStock <= 0 ? 'Out' : item.directStock <= item.minStock ? 'Low' : 'OK';
                   const category = categories.find(c => Number(c.id) === Number(item.categoryId));
                   return (
-                    <tr key={item.id} className="hover:bg-bg-surface-2 group transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{item.name}</div>
-                      </td>
-                      <td className="px-8 py-6">
-                         <span className="badge sm font-bold">{category?.name}</span>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-4">
-                          <span className={clsx(
-                             "badge sm",
-                             status === 'OK' ? "badge-success" :
-                             status === 'Low' ? "badge-warning" :
-                             "badge-danger"
-                           )}>
-                             {status === 'OK' ? 'Available' : status}
-                           </span>
-                           <div className="font-mono text-sm font-bold text-text-primary">
-                             {item.directStock} units <span className="text-[10px] text-text-muted ml-1">/ floor: {item.minStock}</span>
-                           </div>
+                    <div key={item.id} className="p-4 bg-bg-surface border border-border-light rounded-xl flex flex-col gap-3 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{item.name}</div>
+                          <span className="inline-block badge sm mt-1 text-[9px] uppercase font-bold tracking-wider">{category?.name}</span>
                         </div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
+                        <span className={clsx(
+                          "badge sm text-[9px]",
+                          status === 'OK' ? "badge-success" :
+                          status === 'Low' ? "badge-warning" :
+                          "badge-danger"
+                        )}>
+                          {status === 'OK' ? 'Available' : status}
+                        </span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-xs pt-2 border-t border-border-light/50 font-mono">
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder block">Current Stock</span>
+                          <div className="font-bold text-[11px] text-text-primary">{item.directStock} units</div>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder block">Floor Threshold</span>
+                          <div className="font-bold text-[11px] text-text-primary">{item.minStock} units</div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-end pt-2 border-t border-border-light/50">
                         <button 
                           onClick={() => { setDirectRestockItem(item); setIsDirectRestockModalOpen(true); }}
-                          className="btn-secondary py-2"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-surface border border-border-light rounded-lg text-success hover:bg-success/5 transition-all text-[10px] font-bold uppercase tracking-wider"
                         >
-                           <ArrowRightLeft className="w-4 h-4 mr-2" /> REPLENISH
+                          <ArrowRightLeft className="w-3.5 h-3.5" /> REPLENISH
                         </button>
-                      </td>
-                    </tr>
-                  )
+                      </div>
+                    </div>
+                  );
                 })}
-              </tbody>
-            </table>
+              </div>
+
+              {/* Desktop Direct Stock Table */}
+              <div className="hidden md:block overflow-x-auto w-full">
+                <table className="table-main">
+                  <thead>
+                    <tr>
+                      <th className="px-8 py-5">Packaged Asset</th>
+                      <th className="px-8 py-5">Classification</th>
+                      <th className="px-8 py-5">Volume State</th>
+                      <th className="px-8 py-5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border-light">
+                    {stockedItems.map(item => {
+                      const status = item.directStock <= 0 ? 'Out' : item.directStock <= item.minStock ? 'Low' : 'OK';
+                      const category = categories.find(c => Number(c.id) === Number(item.categoryId));
+                      return (
+                        <tr key={item.id} className="hover:bg-bg-surface-2 group transition-colors">
+                          <td className="px-8 py-6">
+                            <div className="text-sm font-bold text-text-primary uppercase tracking-tight">{item.name}</div>
+                          </td>
+                          <td className="px-8 py-6">
+                             <span className="badge sm font-bold">{category?.name}</span>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <span className={clsx(
+                                 "badge sm",
+                                 status === 'OK' ? "badge-success" :
+                                 status === 'Low' ? "badge-warning" :
+                                 "badge-danger"
+                               )}>
+                                 {status === 'OK' ? 'Available' : status}
+                               </span>
+                               <div className="font-mono text-sm font-bold text-text-primary">
+                                 {item.directStock} units <span className="text-[10px] text-text-muted ml-1">/ floor: {item.minStock}</span>
+                               </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <button 
+                              onClick={() => { setDirectRestockItem(item); setIsDirectRestockModalOpen(true); }}
+                              className="btn-secondary py-2"
+                            >
+                               <ArrowRightLeft className="w-4 h-4 mr-2" /> REPLENISH
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {activeTab === 'recipes' && (
@@ -434,15 +554,15 @@ export default function Inventory() {
                    const recipe = recipes.find(r => r.menuItemId === item.id);
                  const hasRecipe = !!recipe;
                  return (
-                   <div key={item.id} className="flex items-center justify-between p-10 hover:bg-bg-surface-2 transition-all group">
-                      <div className="flex items-center gap-6">
-                         <div className="w-16 h-16 bg-bg-surface-2 rounded-xl border border-border-light flex items-center justify-center">
-                            <ChefHat className="w-8 h-8 text-accent" />
+                   <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-10 hover:bg-bg-surface-2 transition-all group gap-4">
+                      <div className="flex items-center gap-4 sm:gap-6">
+                         <div className="w-12 h-12 sm:w-16 sm:h-16 bg-bg-surface-2 rounded-xl border border-border-light flex items-center justify-center shrink-0">
+                            <ChefHat className="w-6 h-6 sm:w-8 sm:h-8 text-accent" />
                          </div>
                          <div>
-                            <div className="text-base font-bold text-text-primary uppercase tracking-tight">{item.name}</div>
+                            <div className="text-sm sm:text-base font-bold text-text-primary uppercase tracking-tight">{item.name}</div>
                             <div className={clsx(
-                              "text-[11px] font-bold uppercase tracking-wider mt-2 flex items-center gap-2",
+                              "text-[10px] sm:text-[11px] font-bold uppercase tracking-wider mt-1.5 sm:mt-2 flex items-center gap-2",
                               hasRecipe ? "text-success" : "text-text-disabled"
                             )}>
                               {hasRecipe ? (
@@ -453,15 +573,15 @@ export default function Inventory() {
                             </div>
                          </div>
                       </div>
-                      <div className="flex items-center gap-8">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 w-full sm:w-auto justify-end">
                          {!hasRecipe && (
-                           <div className="text-[10px] text-warning font-bold uppercase tracking-wider italic max-w-[200px] text-right leading-relaxed">
+                           <div className="text-[10px] text-warning font-bold uppercase tracking-wider italic text-left sm:text-right leading-relaxed max-w-full sm:max-w-[200px]">
                              CRITICAL: Inventory will not decrement without a defined formula.
                            </div>
                          )}
                          <button 
                           onClick={() => handleOpenRecipeEditor(item)}
-                          className="btn-secondary py-3"
+                          className="btn-secondary py-2.5 sm:py-3 w-full sm:w-auto justify-center"
                          >
                             <Edit3 className="w-4 h-4 mr-2" /> Architect Formula
                          </button>
@@ -474,86 +594,141 @@ export default function Inventory() {
 
           {activeTab === 'logs' && (
             <>
-            <table className="w-full text-left">
-              <thead>
-                <tr className="bg-slate-50/50 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">
-                  <th className="px-8 py-5">Event Cycle</th>
-                  <th className="px-8 py-5">Subject</th>
-                  <th className="px-8 py-5">Adjustment Delta</th>
-                  <th className="px-8 py-5">Operator Context</th>
-                  <th className="px-8 py-5 text-right">Post-Operation State</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
+              {/* Mobile Logs Cards View */}
+              <div className="block md:hidden space-y-3 p-1">
                 {paginatedLogs.map(log => {
                   const ingredient = ingredients.find(i => i.id === log.ingredientId);
                   const menuItem = menuItems.find(m => m.id === log.menuItemId);
                   const itemName = ingredient?.name || menuItem?.name || 'Undefined Entity';
                   const unit = ingredient?.unit || 'units';
-
                   return (
-                    <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="font-mono text-[10px] font-black text-slate-900 border border-slate-100 bg-slate-50 px-2 py-1 rounded w-fit uppercase">
-                          {format(log.createdAt, 'dd.MM hh:mm:ss a')}
+                    <div key={log.id} className="p-4 bg-bg-surface border border-border-light rounded-xl flex flex-col gap-3 shadow-sm">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <span className={clsx(
+                            "inline-block text-[8px] uppercase px-2 py-0.5 rounded-full font-black border",
+                            log.ingredientId ? "bg-blue-50/15 border-blue-500/20 text-blue-500" : "bg-emerald-50/15 border-emerald-500/20 text-emerald-500"
+                          )}>
+                            {log.ingredientId ? 'Raw' : 'Discrete'}
+                          </span>
+                          <div className="text-sm font-bold text-text-primary uppercase tracking-tight mt-1.5">{itemName}</div>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-3">
-                           <span className={clsx(
-                             "text-[8px] uppercase px-2 py-0.5 rounded-full font-black border",
-                             log.ingredientId ? "bg-blue-50 border-blue-100 text-blue-500" : "bg-emerald-50 border-emerald-100 text-emerald-500"
-                           )}>
-                             {log.ingredientId ? 'Raw' : 'Discrete'}
-                           </span>
-                           <div className="text-sm font-black text-slate-900 uppercase tracking-tight">{itemName}</div>
+                        <div className="font-mono text-[9px] font-bold text-text-muted bg-bg-surface-2 border border-border-light px-2 py-1 rounded shrink-0">
+                          {format(log.createdAt, 'dd.MM hh:mm a')}
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className={clsx(
-                          "font-mono font-black text-sm",
-                          log.changeAmount > 0 ? "text-emerald-500" : "text-rose-500"
-                        )}>
-                          {log.changeAmount > 0 ? '↑' : '↓'} {Math.abs(log.changeAmount)} {unit}
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-border-light/50 font-mono">
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder block">Adjustment</span>
+                          <div className={clsx(
+                            "font-bold text-[11px]",
+                            log.changeAmount > 0 ? "text-emerald-500" : "text-rose-500"
+                          )}>
+                            {log.changeAmount > 0 ? '↑' : '↓'} {Math.abs(log.changeAmount)} {unit}
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <span className="text-[9px] font-black uppercase tracking-widest px-3 py-1 bg-white border border-slate-100 rounded-lg text-slate-400">
+                        <div className="text-right">
+                          <span className="text-[9px] uppercase font-bold text-text-placeholder block">Delta Post-Stock</span>
+                          <div className="font-bold text-[11px] text-text-primary">{log.remainingAfter} {unit}</div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-border-light/50 flex justify-between items-center">
+                        <span className="text-[9px] uppercase font-bold text-text-placeholder block">Reason</span>
+                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 bg-bg-surface-2 border border-border-light rounded text-text-muted">
                           {log.reason}
                         </span>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="font-mono text-sm font-black text-slate-900">{log.remainingAfter} <span className="text-[10px] text-slate-400">{unit}</span></div>
-                      </td>
-                    </tr>
-                  )
+                      </div>
+                    </div>
+                  );
                 })}
-              </tbody>
-            </table>
-            <div className="px-8 py-5 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between">
-              <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">
-                {filteredLogs.length} Historical records indexed
-              </span>
-              <div className="flex items-center gap-3">
-                <button 
-                  disabled={logPage === 1}
-                  onClick={() => setLogPage(p => p - 1)}
-                  className="p-2 rounded-xl border border-slate-100 bg-white text-slate-300 hover:text-slate-900 hover:border-slate-300 disabled:opacity-20 transition-all"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <span className="text-[10px] font-mono font-black text-slate-900 px-3 py-1 bg-white border border-slate-100 rounded-lg shadow-sm">
-                  {logPage} <span className="text-slate-300">/</span> {Math.max(1, totalLogPages)}
-                </span>
-                <button 
-                  disabled={logPage >= totalLogPages}
-                  onClick={() => setLogPage(p => p + 1)}
-                  className="p-2 rounded-xl border border-slate-100 bg-white text-slate-300 hover:text-slate-900 hover:border-slate-300 disabled:opacity-20 transition-all"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
               </div>
-            </div>
+
+              {/* Desktop Logs Table */}
+              <div className="hidden md:block overflow-x-auto w-full">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-slate-50/50 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">
+                      <th className="px-8 py-5">Event Cycle</th>
+                      <th className="px-8 py-5">Subject</th>
+                      <th className="px-8 py-5">Adjustment Delta</th>
+                      <th className="px-8 py-5">Operator Context</th>
+                      <th className="px-8 py-5 text-right">Post-Operation State</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {paginatedLogs.map(log => {
+                      const ingredient = ingredients.find(i => i.id === log.ingredientId);
+                      const menuItem = menuItems.find(m => m.id === log.menuItemId);
+                      const itemName = ingredient?.name || menuItem?.name || 'Undefined Entity';
+                      const unit = ingredient?.unit || 'units';
+
+                      return (
+                        <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-8 py-6">
+                            <div className="font-mono text-[10px] font-black text-slate-900 border border-slate-100 bg-slate-50 px-2 py-1 rounded w-fit uppercase">
+                              {format(log.createdAt, 'dd.MM hh:mm:ss a')}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-3">
+                               <span className={clsx(
+                                 "text-[8px] uppercase px-2 py-0.5 rounded-full font-black border",
+                                 log.ingredientId ? "bg-blue-50 border-blue-100 text-blue-500" : "bg-emerald-50 border-emerald-100 text-emerald-500"
+                               )}>
+                                 {log.ingredientId ? 'Raw' : 'Discrete'}
+                               </span>
+                               <div className="text-sm font-black text-slate-900 uppercase tracking-tight">{itemName}</div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className={clsx(
+                              "font-mono font-black text-sm",
+                              log.changeAmount > 0 ? "text-emerald-500" : "text-rose-500"
+                            )}>
+                              {log.changeAmount > 0 ? '↑' : '↓'} {Math.abs(log.changeAmount)} {unit}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <span className="text-[9px] font-black uppercase tracking-widest px-3 py-1 bg-white border border-slate-100 rounded-lg text-slate-400">
+                              {log.reason}
+                            </span>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <div className="font-mono text-sm font-black text-slate-900">{log.remainingAfter} <span className="text-[10px] text-slate-400">{unit}</span></div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-4 md:px-8 md:py-5 border-t border-slate-100 bg-slate-50/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">
+                  {filteredLogs.length} Historical records indexed
+                </span>
+                <div className="flex items-center gap-3">
+                  <button 
+                    disabled={logPage === 1}
+                    onClick={() => setLogPage(p => p - 1)}
+                    className="p-2 rounded-xl border border-slate-100 bg-white text-slate-300 hover:text-slate-900 hover:border-slate-300 disabled:opacity-20 transition-all"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <span className="text-[10px] font-mono font-black text-slate-900 px-3 py-1 bg-white border border-slate-100 rounded-lg shadow-sm">
+                    {logPage} <span className="text-slate-300">/</span> {Math.max(1, totalLogPages)}
+                  </span>
+                  <button 
+                    disabled={logPage >= totalLogPages}
+                    onClick={() => setLogPage(p => p + 1)}
+                    className="p-2 rounded-xl border border-slate-100 bg-white text-slate-300 hover:text-slate-900 hover:border-slate-300 disabled:opacity-20 transition-all"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>
