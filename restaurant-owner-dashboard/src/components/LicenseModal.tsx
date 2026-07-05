@@ -149,7 +149,7 @@ export default function LicenseModal({
               </button>
             </div>
             
-            
+         
           </div>
 
           {/* License Key Section */}
@@ -184,7 +184,7 @@ export default function LicenseModal({
                   disabled={isLoading}
                   autoFocus
                 />
-               
+                
               </div>
 
               <button

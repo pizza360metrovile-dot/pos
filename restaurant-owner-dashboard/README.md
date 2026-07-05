@@ -1,1 +1,1 @@
-owner panel
+Restaurant management system

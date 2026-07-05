@@ -3,13 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { fireStore } from '../lib/firebase';
 import { db } from '../lib/db';
 import { useStore } from '../store/useStore';
-import { isTabVisible } from '../config/tabVisibility';
-
-const unsubs: (() => void)[] = [];
 
 function parseId(idStr: string): number | string {
   const num = Number(idStr);
@@ -114,129 +111,122 @@ const refreshMapping: Record<string, () => Promise<void>> = {
   expenseCategories: refreshExpensesInStore,
 };
 
-export function stopAllListeners() {
-  console.log(`Stopping all active Firestore snapshot listeners (${unsubs.length} active)...`);
-  unsubs.forEach(unsub => {
-    try {
-      unsub();
-    } catch (e) {
-      console.warn('Failed to stop listener:', e);
+async function performOneTimeFetch(uid: string, col: { name: string; table: any }) {
+  if (!fireStore) return;
+  try {
+    console.log(`[One-time sync] Fetching ${col.name} from Firestore...`);
+    const querySnap = await getDocs(
+      collection(fireStore, `restaurants/${uid}/${col.name}`)
+    );
+    
+    await db.transaction('rw', [col.table], async (tx: any) => {
+      tx.fromFirestore = true;
+      await col.table.clear();
+      
+      for (const docObj of querySnap.docs) {
+        const docId = parseId(docObj.id);
+        const data = convertTimestampsToMs(docObj.data());
+        
+        if (col.name === 'settings') {
+          await db.settings.put({
+            id: docId === 'main' ? undefined : (typeof docId === 'number' ? docId : undefined),
+            key: data.key || 'main',
+            value: data.value
+          });
+        } else {
+          const formattedData = {
+            ...data,
+            id: docId
+          };
+          await col.table.put(formattedData as any);
+        }
+      }
+    });
+
+    const callback = refreshMapping[col.name];
+    if (callback) {
+      await callback();
     }
-  });
-  unsubs.length = 0;
+  } catch (err: any) {
+    console.warn(`One-time fetch failed for ${col.name}:`, err);
+    if (err?.code === 'resource-exhausted' || err?.message?.toLowerCase().includes('quota')) {
+      useStore.setState({ isQuotaExceeded: true });
+    }
+  }
 }
 
-export async function initAllListeners(uid: string) {
+export async function syncRouteData(uid: string, path: string) {
   if (!fireStore) {
-    console.warn('Firestore is not configured. Skipping listener initialization.');
+    console.warn('Firestore is not configured. Skipping route sync.');
     return;
   }
 
-  // Clear existing active listeners to avoid duplicates
-  stopAllListeners();
+  // Check if offline
+  if (useStore.getState().cloudSync === false) {
+    console.log('Cloud sync is disabled. Skipping route sync.');
+    return;
+  }
 
-  console.log(`Initializing all real-time Firestore listeners for UID: ${uid}...`);
+  // Map path to route keys
+  let activeRoute = 'pos';
+  if (path === '/' || path === '') activeRoute = 'pos';
+  else if (path.startsWith('/menu')) activeRoute = 'menu';
+  else if (path.startsWith('/inventory')) activeRoute = 'inventory';
+  else if (path.startsWith('/records')) activeRoute = 'records';
+  else if (path.startsWith('/performance')) activeRoute = 'performance';
+  else if (path.startsWith('/expenses')) activeRoute = 'expenses';
+  else if (path.startsWith('/settings')) activeRoute = 'settings';
 
-  const isPosVisible = isTabVisible('pos');
-  const isMenuVisible = isTabVisible('menu');
-  const isRecordsVisible = isTabVisible('records');
-  const isPerformanceVisible = isTabVisible('performance');
-  const isInventoryVisible = isTabVisible('inventory');
-  const isExpensesVisible = isTabVisible('expenses');
+  console.log(`[One-time sync] Fetching collections for route: ${activeRoute}...`);
 
-  const collectionsToSync: Array<{ name: string; table: any }> = [];
+  const collectionsToFetch: Array<{ name: string; table: any }> = [];
 
   // Core app settings always needed
-  collectionsToSync.push({ name: 'settings', table: db.settings });
+  collectionsToFetch.push({ name: 'settings', table: db.settings });
 
-  // Order collections (needed for POS, Records, and Performance)
-  if (isPosVisible || isRecordsVisible || isPerformanceVisible) {
-    collectionsToSync.push(
+  if (activeRoute === 'pos') {
+    collectionsToFetch.push(
       { name: 'orders', table: db.orders },
       { name: 'orderItems', table: db.orderItems },
       { name: 'orderItemModifiers', table: db.orderItemModifiers },
       { name: 'dealOrderComponents', table: db.dealOrderComponents },
-      { name: 'kotSnapshots', table: db.kotSnapshots }
-    );
-  }
-
-  // Menu items and categories (needed for POS or Menu management)
-  if (isPosVisible || isMenuVisible) {
-    collectionsToSync.push(
+      { name: 'kotSnapshots', table: db.kotSnapshots },
       { name: 'menuItems', table: db.menuItems },
       { name: 'categories', table: db.categories },
       { name: 'modifierGroups', table: db.modifierGroups },
       { name: 'modifierOptions', table: db.modifierOptions },
       { name: 'dealItems', table: db.dealItems }
     );
-  }
-
-  // Inventory collections (needed for Inventory)
-  if (isInventoryVisible) {
-    collectionsToSync.push(
+  } else if (activeRoute === 'menu') {
+    collectionsToFetch.push(
+      { name: 'menuItems', table: db.menuItems },
+      { name: 'categories', table: db.categories },
+      { name: 'modifierGroups', table: db.modifierGroups },
+      { name: 'modifierOptions', table: db.modifierOptions },
+      { name: 'dealItems', table: db.dealItems }
+    );
+  } else if (activeRoute === 'records' || activeRoute === 'performance') {
+    collectionsToFetch.push(
+      { name: 'orders', table: db.orders },
+      { name: 'orderItems', table: db.orderItems },
+      { name: 'orderItemModifiers', table: db.orderItemModifiers },
+      { name: 'dealOrderComponents', table: db.dealOrderComponents },
+      { name: 'kotSnapshots', table: db.kotSnapshots }
+    );
+  } else if (activeRoute === 'inventory') {
+    collectionsToFetch.push(
       { name: 'ingredients', table: db.ingredients },
       { name: 'recipes', table: db.recipes },
       { name: 'recipeItems', table: db.recipeItems },
       { name: 'stockLog', table: db.stockLog }
     );
-  }
-
-  // Expenses collections (needed for Expenses)
-  if (isExpensesVisible) {
-    collectionsToSync.push(
+  } else if (activeRoute === 'expenses') {
+    collectionsToFetch.push(
       { name: 'expenses', table: db.expenses },
       { name: 'expenseCategories', table: db.expenseCategories }
     );
   }
 
-  collectionsToSync.forEach(col => {
-    const unsub = onSnapshot(
-      collection(fireStore, `restaurants/${uid}/${col.name}`),
-      async (snapshot) => {
-        try {
-          await db.transaction('rw', [col.table], async (tx: any) => {
-            tx.fromFirestore = true;
-            for (const change of snapshot.docChanges()) {
-              const docId = parseId(change.doc.id);
-              const data = convertTimestampsToMs(change.doc.data());
-
-              if (change.type === 'added' || change.type === 'modified') {
-                if (col.name === 'settings') {
-                  await db.settings.put({
-                    id: docId === 'main' ? undefined : (typeof docId === 'number' ? docId : undefined),
-                    key: data.key || 'main',
-                    value: data.value
-                  });
-                } else {
-                  const formattedData = {
-                    ...data,
-                    id: docId
-                  };
-                  await col.table.put(formattedData as any);
-                }
-              } else if (change.type === 'removed') {
-                await col.table.delete(docId as any);
-              }
-            }
-          });
-
-          // Trigger associated store re-hydration
-          const callback = refreshMapping[col.name];
-          if (callback) {
-            await callback();
-          }
-        } catch (err) {
-          console.warn(`Firestore listener transaction error for ${col.name}:`, err);
-        }
-      },
-      (err: any) => {
-        console.warn(`Firestore listener stream error for ${col.name}:`, err);
-        if (err?.code === 'resource-exhausted' || err?.message?.toLowerCase().includes('quota')) {
-          useStore.setState({ isQuotaExceeded: true });
-        }
-      }
-    );
-
-    unsubs.push(unsub);
-  });
+  // Perform one-time fetches in parallel
+  await Promise.all(collectionsToFetch.map(col => performOneTimeFetch(uid, col)));
 }

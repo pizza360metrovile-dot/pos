@@ -16,7 +16,6 @@ import {
   setDoc, 
   deleteDoc, 
   collection, 
-  onSnapshot, 
   query, 
   getDocs, 
   writeBatch,
@@ -1407,48 +1406,61 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ syncError: null, isOnline: true });
 
       if (settingsSnap.exists()) {
-        console.log('Restaurants settings exist on Firestore. Restoring collections to local Dexie (first device migration)...');
-        
-        // 1. Settings restoration
-        const remoteSettings = settingsSnap.data() as RestaurantSettings;
-        await db.settings.put({ key: 'main', value: remoteSettings });
+        const storedSyncTS = localStorage.getItem('lastSyncTimestamp');
+        const lastSyncTimestamp = storedSyncTS ? parseInt(storedSyncTS, 10) : 0;
 
-        // 2. Clear out other tables and restore all from Firestore
-        const collectionsToPull = [
-          { name: 'categories', table: db.categories },
-          { name: 'menuItems', table: db.menuItems },
-          { name: 'orders', table: db.orders },
-          { name: 'orderItems', table: db.orderItems },
-          { name: 'ingredients', table: db.ingredients },
-          { name: 'recipes', table: db.recipes },
-          { name: 'recipeItems', table: db.recipeItems },
-          { name: 'stockLog', table: db.stockLog },
-          { name: 'modifierGroups', table: db.modifierGroups },
-          { name: 'modifierOptions', table: db.modifierOptions },
-          { name: 'orderItemModifiers', table: db.orderItemModifiers },
-          { name: 'dealItems', table: db.dealItems },
-          { name: 'dealOrderComponents', table: db.dealOrderComponents },
-          { name: 'expenses', table: db.expenses },
-          { name: 'expenseCategories', table: db.expenseCategories },
-          { name: 'cashiers', table: db.cashiers }
-        ];
+        if (lastSyncTimestamp > 0) {
+          console.log('Local DB has sync history. Skipping full collections restoration during setupSync.');
+          // Just update settings to match what's on Firestore, but don't clear or download other tables
+          const remoteSettings = settingsSnap.data() as RestaurantSettings;
+          await db.settings.put({ key: 'main', value: remoteSettings });
+        } else {
+          console.log('Restaurants settings exist on Firestore and no sync history. Restoring collections to local Dexie (first device migration)...');
+          
+          // 1. Settings restoration
+          const remoteSettings = settingsSnap.data() as RestaurantSettings;
+          await db.settings.put({ key: 'main', value: remoteSettings });
 
-        for (const col of collectionsToPull) {
-          const querySnap = await getDocs(collection(fireStore, `restaurants/${uid}/${col.name}`));
-          // Run in write transaction marked fromFirestore to prevent hook infinite loop syncing
-          await db.transaction('rw', [col.table], async (tx: any) => {
-            tx.fromFirestore = true;
-            // Clear current table contents first before restoring
-            await col.table.clear();
-            for (const docObj of querySnap.docs) {
-              const data = docObj.data();
-              const docId = parseId(docObj.id);
-              await col.table.put({
-                ...data,
-                id: docId
-              } as any);
-            }
-          });
+          // 2. Clear out other tables and restore all from Firestore
+          const collectionsToPull = [
+            { name: 'categories', table: db.categories },
+            { name: 'menuItems', table: db.menuItems },
+            { name: 'orders', table: db.orders },
+            { name: 'orderItems', table: db.orderItems },
+            { name: 'ingredients', table: db.ingredients },
+            { name: 'recipes', table: db.recipes },
+            { name: 'recipeItems', table: db.recipeItems },
+            { name: 'stockLog', table: db.stockLog },
+            { name: 'modifierGroups', table: db.modifierGroups },
+            { name: 'modifierOptions', table: db.modifierOptions },
+            { name: 'orderItemModifiers', table: db.orderItemModifiers },
+            { name: 'dealItems', table: db.dealItems },
+            { name: 'dealOrderComponents', table: db.dealOrderComponents },
+            { name: 'expenses', table: db.expenses },
+            { name: 'expenseCategories', table: db.expenseCategories },
+            { name: 'cashiers', table: db.cashiers }
+          ];
+
+          for (const col of collectionsToPull) {
+            const querySnap = await getDocs(collection(fireStore, `restaurants/${uid}/${col.name}`));
+            // Run in write transaction marked fromFirestore to prevent hook infinite loop syncing
+            await db.transaction('rw', [col.table], async (tx: any) => {
+              tx.fromFirestore = true;
+              // Clear current table contents first before restoring
+              await col.table.clear();
+              for (const docObj of querySnap.docs) {
+                const data = docObj.data();
+                const docId = parseId(docObj.id);
+                await col.table.put({
+                  ...data,
+                  id: docId
+                } as any);
+              }
+            });
+          }
+
+          // Persist the lastSyncTimestamp to localStorage after a successful full first-device migration
+          localStorage.setItem('lastSyncTimestamp', String(Date.now()));
         }
 
         // Hydrate Zustand store slices
@@ -1494,11 +1506,9 @@ export const useStore = create<StoreState>((set, get) => ({
         // Firestore is empty - push local local Dexie data to Firestore (first device migration)
         console.log('No settings found on Firestore. Running force sync of local data to Cloud...');
         await get().forceSync();
+        // Also persist the timestamp after pushing
+        localStorage.setItem('lastSyncTimestamp', String(Date.now()));
       }
-
-      // Now start the listeners only on success
-      const { initAllListeners } = await import('../services/firestoreListeners');
-      await initAllListeners(uid);
 
     } catch (err: any) {
       console.warn('Initial sync check / migration failed or ran offline:', err.message);
@@ -1513,7 +1523,7 @@ export const useStore = create<StoreState>((set, get) => ({
       }
 
       if (syncRetryCount >= MAX_RETRIES) {
-        console.error('setupSync: Max retries reached, giving up');
+        console.warn('setupSync: Max retries reached, running in local offline mode');
         set({ syncError: 'Firestore connection timeout. Using local offline mode.' });
         return; // STOP - Don't retry, run completely in local offline mode
       }
@@ -1530,18 +1540,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   syncToFirebase: async (collectionName: string, id: string | number, data: any) => {
-    const { user, cloudSync } = get();
-    if (!user || !fireStore || !cloudSync) return;
-    try {
-      if (data === null) {
-        await deleteDoc(doc(fireStore, 'restaurants', user.uid, collectionName, id.toString()));
-      } else {
-        await setDoc(doc(fireStore, 'restaurants', user.uid, collectionName, id.toString()), data);
-      }
-      set({ lastSynced: Date.now() });
-    } catch (err) {
-      console.warn(`Sync failed for ${collectionName}:`, err);
-    }
+    // Deprecated: background sync worker handles sync now
   },
 
   setCloudSync: async (enabled: boolean) => {
@@ -1680,12 +1679,7 @@ export const useStore = create<StoreState>((set, get) => ({
         await disableNetwork(fireStore);
         await db.appMeta.put({ key: '_sync', value: false });
         
-        try {
-          const { stopAllListeners } = await import('../services/firestoreListeners');
-          stopAllListeners();
-        } catch (e) {
-          console.warn('Failed to stop listeners on disable sync:', e);
-        }
+        // No listeners to stop since we use pure one-time fetches
         
         set({ cloudSync: false, isOnline: false });
         toast.success('Cloud sync disabled. App running in local mode.');
@@ -1720,12 +1714,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   logout: async () => {
-    try {
-      const { stopAllListeners } = await import('../services/firestoreListeners');
-      stopAllListeners();
-    } catch (e) {
-      console.warn('Failed to stop listeners on logout:', e);
-    }
+    // No listeners to stop since we use pure one-time fetches
     localStorage.removeItem('rms_session');
     set({
       user: null,
@@ -2934,134 +2923,137 @@ export const useStore = create<StoreState>((set, get) => ({
   startKillSwitchListeners: async () => {
     if (!fireStore || !get().cloudSync) return;
 
-    // Clean up any existing listeners first
-    get().stopKillSwitchListeners();
-
     try {
       const rid = await getRestaurantId();
       const globalDocRef = doc(fireStore, 'appControl', 'global');
       const restDocRef = doc(fireStore, 'appControl', rid);
 
-      const unsubGlobal = onSnapshot(globalDocRef, async (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data() : { shutdown: false, shutdownMessage: '', maintenanceMode: false, maintenanceMessage: '' };
-        const currentGlobalShutdown = get().globalShutdown;
-        const currentMaintenance = get().maintenanceMode;
+      // One-time check for global app control settings
+      try {
+        const globalSnap = await getDoc(globalDocRef);
+        if (globalSnap.exists()) {
+          const data = globalSnap.data();
+          const currentGlobalShutdown = get().globalShutdown;
+          const currentMaintenance = get().maintenanceMode;
 
-        const remoteShutdown = data?.shutdown === true;
-        const remoteShutdownMsg = data?.shutdownMessage || '';
-        const remoteMaintenance = data?.maintenanceMode === true;
-        const remoteMaintenanceMsg = data?.maintenanceMessage || '';
+          const remoteShutdown = data?.shutdown === true;
+          const remoteShutdownMsg = data?.shutdownMessage || '';
+          const remoteMaintenance = data?.maintenanceMode === true;
+          const remoteMaintenanceMsg = data?.maintenanceMessage || '';
 
-        // Handle Global Shutdown change
-        if (remoteShutdown !== currentGlobalShutdown) {
-          if (remoteShutdown) {
-            await db.appMeta.put({ key: '_sd', value: true });
+          // Handle Global Shutdown change
+          if (remoteShutdown !== currentGlobalShutdown) {
+            if (remoteShutdown) {
+              await db.appMeta.put({ key: '_sd', value: true });
+              if (remoteShutdownMsg) {
+                await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
+              }
+              set({ globalShutdown: true, globalShutdownMessage: remoteShutdownMsg });
+            } else {
+              await db.appMeta.delete('_sd');
+              await db.appMeta.delete('_sd_msg');
+              set({ globalShutdown: false, globalShutdownMessage: '' });
+
+              // Show toast on transition from true to false
+              if (currentGlobalShutdown === true) {
+                toast.success("Service restored");
+                // Redirect to login automatically
+                get().logout();
+              }
+            }
+          } else if (remoteShutdown && remoteShutdownMsg !== get().globalShutdownMessage) {
+            // Message updated
             if (remoteShutdownMsg) {
               await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
             }
-            set({ globalShutdown: true, globalShutdownMessage: remoteShutdownMsg });
-          } else {
-            await db.appMeta.delete('_sd');
-            await db.appMeta.delete('_sd_msg');
-            set({ globalShutdown: false, globalShutdownMessage: '' });
+            set({ globalShutdownMessage: remoteShutdownMsg });
+          }
 
-            // Show toast on transition from true to false
-            if (currentGlobalShutdown === true) {
-              toast.success("Service restored");
-              // Redirect to login automatically
-              get().logout();
+          // Handle Maintenance Mode change
+          if (remoteMaintenance !== currentMaintenance) {
+            if (remoteMaintenance) {
+              await db.appMeta.put({ key: '_mm', value: true });
+              if (remoteMaintenanceMsg) {
+                await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
+              }
+              set({ maintenanceMode: true, maintenanceMessage: remoteMaintenanceMsg });
+            } else {
+              await db.appMeta.delete('_mm');
+              await db.appMeta.delete('_mm_msg');
+              set({ maintenanceMode: false, maintenanceMessage: '' });
+
+              // Show toast on transition from true to false
+              if (currentMaintenance === true) {
+                toast.success("Maintenance complete");
+                get().logout();
+              }
             }
-          }
-        } else if (remoteShutdown && remoteShutdownMsg !== get().globalShutdownMessage) {
-          // Message updated
-          if (remoteShutdownMsg) {
-            await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
-          }
-          set({ globalShutdownMessage: remoteShutdownMsg });
-        }
-
-        // Handle Maintenance Mode change
-        if (remoteMaintenance !== currentMaintenance) {
-          if (remoteMaintenance) {
-            await db.appMeta.put({ key: '_mm', value: true });
+          } else if (remoteMaintenance && remoteMaintenanceMsg !== get().maintenanceMessage) {
             if (remoteMaintenanceMsg) {
               await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
             }
-            set({ maintenanceMode: true, maintenanceMessage: remoteMaintenanceMsg });
-          } else {
-            await db.appMeta.delete('_mm');
-            await db.appMeta.delete('_mm_msg');
-            set({ maintenanceMode: false, maintenanceMessage: '' });
-
-            // Show toast on transition from true to false
-            if (currentMaintenance === true) {
-              toast.success("Maintenance complete");
-              get().logout();
-            }
+            set({ maintenanceMessage: remoteMaintenanceMsg });
           }
-        } else if (remoteMaintenance && remoteMaintenanceMsg !== get().maintenanceMessage) {
-          if (remoteMaintenanceMsg) {
-            await db.appMeta.put({ key: '_mm_msg', value: remoteMaintenanceMsg });
-          }
-          set({ maintenanceMessage: remoteMaintenanceMsg });
         }
-      }, (err) => {
-        console.error("Global kill switch listener error:", err);
-      });
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.toLowerCase().includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
+          console.warn("Global kill switch check: client is offline.");
+        } else {
+          console.error("Global kill switch check failed:", err);
+        }
+      }
 
-      const unsubRest = onSnapshot(restDocRef, async (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data() : { shutdown: false, shutdownMessage: '' };
-        const currentRestShutdown = get().restaurantShutdown;
+      // One-time check for restaurant specific control settings
+      try {
+        const restSnap = await getDoc(restDocRef);
+        if (restSnap.exists()) {
+          const data = restSnap.data();
+          const currentRestShutdown = get().restaurantShutdown;
 
-        const remoteRShutdown = data?.shutdown === true;
-        const remoteRShutdownMsg = data?.shutdownMessage || '';
+          const remoteRShutdown = data?.shutdown === true;
+          const remoteRShutdownMsg = data?.shutdownMessage || '';
 
-        // Handle Restaurant Shutdown change
-        if (remoteRShutdown !== currentRestShutdown) {
-          if (remoteRShutdown) {
-            await db.appMeta.put({ key: '_rsd', value: true });
+          // Handle Restaurant Shutdown change
+          if (remoteRShutdown !== currentRestShutdown) {
+            if (remoteRShutdown) {
+              await db.appMeta.put({ key: '_rsd', value: true });
+              if (remoteRShutdownMsg) {
+                await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
+              }
+              set({ restaurantShutdown: true, restaurantShutdownMessage: remoteRShutdownMsg });
+            } else {
+              await db.appMeta.delete('_rsd');
+              await db.appMeta.delete('_rsd_msg');
+              set({ restaurantShutdown: false, restaurantShutdownMessage: '' });
+
+              if (currentRestShutdown === true) {
+                toast.success("Service restored");
+                get().logout();
+              }
+            }
+          } else if (remoteRShutdown && remoteRShutdownMsg !== get().restaurantShutdownMessage) {
             if (remoteRShutdownMsg) {
               await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
             }
-            set({ restaurantShutdown: true, restaurantShutdownMessage: remoteRShutdownMsg });
-          } else {
-            await db.appMeta.delete('_rsd');
-            await db.appMeta.delete('_rsd_msg');
-            set({ restaurantShutdown: false, restaurantShutdownMessage: '' });
-
-            if (currentRestShutdown === true) {
-              toast.success("Service restored");
-              get().logout();
-            }
+            set({ restaurantShutdownMessage: remoteRShutdownMsg });
           }
-        } else if (remoteRShutdown && remoteRShutdownMsg !== get().restaurantShutdownMessage) {
-          if (remoteRShutdownMsg) {
-            await db.appMeta.put({ key: '_rsd_msg', value: remoteRShutdownMsg });
-          }
-          set({ restaurantShutdownMessage: remoteRShutdownMsg });
         }
-      }, (err) => {
-        console.error("Restaurant kill switch listener error:", err);
-      });
-
-      set({ killSwitchListeners: [unsubGlobal, unsubRest] });
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.toLowerCase().includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
+          console.warn("Restaurant kill switch check: client is offline.");
+        } else {
+          console.error("Restaurant kill switch check failed:", err);
+        }
+      }
     } catch (e) {
-      console.error("Failed to start kill switch listeners:", e);
+      console.error("Failed to check kill switch configuration:", e);
     }
   },
 
   stopKillSwitchListeners: () => {
-    const listeners = get().killSwitchListeners;
-    if (listeners) {
-      listeners.forEach(unsub => {
-        try {
-          unsub();
-        } catch (e) {
-          console.warn("Failed unsubscribing:", e);
-        }
-      });
-      set({ killSwitchListeners: null });
-    }
+    // Left as empty stub for compatibility with component calls
   },
 
   fetchLatestKillSwitchState: async () => {

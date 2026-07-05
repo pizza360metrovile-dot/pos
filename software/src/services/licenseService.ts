@@ -259,8 +259,12 @@ export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
     }
     
     return null;
-  } catch (error) {
-    console.error('Failed to fetch license from Firebase:', error);
+  } catch (error: any) {
+    if (error?.message?.includes('offline') || error?.code === 'unavailable') {
+      console.warn('Failed to fetch license from Firebase because client is offline. Will attempt local fallback.');
+    } else {
+      console.error('Failed to fetch license from Firebase:', error);
+    }
     return null;
   }
 }
@@ -271,10 +275,22 @@ export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
 export async function saveLicenseToFirebase(
   license: LicenseData
 ): Promise<boolean> {
+  // Save to local cache first!
+  try {
+    await db.table('appMeta').put({
+      key: 'cachedLicense',
+      value: license,
+      cachedAt: Date.now()
+    } as any);
+    console.log('License saved to local cache successfully.');
+  } catch (e) {
+    console.warn('Failed to cache license locally:', e);
+  }
+
   try {
     if (!fireStore) {
       console.warn('Firestore is not initialized. Cannot save license.');
-      return false;
+      return true; // Return true because it is cached locally and we are offline-first
     }
     const restaurantDoc = doc(fireStore, 'restaurants', uid);
     
@@ -296,7 +312,8 @@ export async function saveLicenseToFirebase(
     return true;
   } catch (error) {
     console.error('Failed to save license to Firebase:', error);
-    return false;
+    // Still return true because it was successfully saved to IndexedDB offline cache
+    return true;
   }
 }
 
@@ -309,8 +326,73 @@ export async function checkDeviceLicense(): Promise<{
   message: string
 }> {
   try {
-    // Fetch from Firebase
-    const firebaseLicense = await fetchLicenseFromFirebase();
+    // 1. Try local cached license first for instant offline startup
+    try {
+      const cachedLicense = await db.table('appMeta').get('cachedLicense');
+      if (cachedLicense && cachedLicense.value) {
+        const license = cachedLicense.value as LicenseData;
+        const isExpired = Date.now() > license.validUntil;
+        if (!isExpired) {
+          console.log('Valid cached license found in IndexedDB (offline-first):', license.licenseKey);
+          return {
+            isValid: true,
+            license: license,
+            message: 'License valid (cached)'
+          };
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('Failed to read license from local cache:', cacheErr);
+    }
+
+    // 2. Fallback to Firebase
+    let firebaseLicense = await fetchLicenseFromFirebase();
+    
+    if (!firebaseLicense) {
+      console.log('No license from Firebase, checking local offline license fallback...');
+      try {
+        const ki = await db.table('appMeta').get('_ki');
+        const xe = await db.table('appMeta').get('_xe');
+        const di = await db.table('appMeta').get('_di');
+        const cs = await db.table('appMeta').get('_cs');
+        const ia = await db.table('appMeta').get('_ia');
+
+        if (ki?.value && xe?.value && di?.value && cs?.value && ia?.value === true) {
+          const computed = await computeChecksum(ki.value, Number(xe.value), di.value);
+          if (cs.value === computed) {
+            firebaseLicense = {
+              licenseKey: ki.value,
+              licensedRestaurant: await getRestaurantId(),
+              validUntil: Number(xe.value),
+              activatedAt: Date.now() - 3600000,
+              isValid: true,
+              deviceId: di.value,
+              restaurantId: await getRestaurantId()
+            };
+            console.log('Valid local offline license found and verified.');
+            // Also cache it
+            await db.table('appMeta').put({
+              key: 'cachedLicense',
+              value: firebaseLicense,
+              cachedAt: Date.now()
+            });
+          }
+        }
+      } catch (localErr) {
+        console.warn('Failed to verify local offline license:', localErr);
+      }
+    } else {
+      // Successfully fetched from Firebase, let's cache it
+      try {
+        await db.table('appMeta').put({
+          key: 'cachedLicense',
+          value: firebaseLicense,
+          cachedAt: Date.now()
+        });
+      } catch (cacheErr) {
+        console.warn('Failed to save Firebase license to local cache:', cacheErr);
+      }
+    }
     
     if (!firebaseLicense) {
       return {

@@ -149,9 +149,7 @@ export default function LicenseModal({
               </button>
             </div>
             
-            <p className="text-xs text-gray-600 bg-blue-50 p-3 rounded border border-blue-200">
-              <strong>Next:</strong> Copy this ID above, paste it in your license generator tool to get a license key.
-            </p>
+         
           </div>
 
           {/* License Key Section */}
@@ -186,9 +184,7 @@ export default function LicenseModal({
                   disabled={isLoading}
                   autoFocus
                 />
-                <p className="text-xs text-gray-600 mt-2 text-center">
-                  License key is a long alphanumeric string (Base64 encoded)
-                </p>
+                
               </div>
 
               <button

@@ -10,10 +10,10 @@
 
 export const TAB_VISIBILITY = {
   // Point of Sale — Main POS operations
-  pos: false,
+  pos: true,
 
   // Menu Management — Manage items and categories
-  menu: false,
+  menu: true,
   
   // Records & Reports — View completed orders
   records: true,
@@ -28,7 +28,7 @@ export const TAB_VISIBILITY = {
   expenses: true,
   
   // Settings — App configuration
-  settings: false,
+  settings: true,
 } as const;
 
 /**

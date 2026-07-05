@@ -398,34 +398,21 @@ export default function App() {
   const isLicenseValid = useStore(state => state.isLicenseValid);
   const licenseData = useStore(state => state.licenseData);
 
-  const [licenseStatus, setLicenseStatus] = useState<'active' | 'locked'>('locked');
-  const [licenseDaysLeft, setLicenseDaysLeft] = useState<number>(0);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Manage dynamic listeners and cleanup on routing
   useEffect(() => {
-    if (user) {
-      const handleRouteSync = async () => {
-        try {
-          const { initAllListeners, logActiveListeners } = await import('./services/firestoreListeners');
-          await initAllListeners(user.uid);
-          logActiveListeners();
-        } catch (err) {
-          console.warn('Failed to dynamically update listeners on route switch:', err);
-        }
-      };
-      handleRouteSync();
-    }
-  }, [location.pathname, user]);
-
-  // Stop all listeners on App unmount
-  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
     return () => {
-      import('./services/firestoreListeners').then(({ stopAllListeners }) => {
-        stopAllListeners();
-        console.log('App unmounted - all listeners stopped');
-      }).catch(err => console.warn('Failed to stop listeners on unmount:', err));
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  const [licenseStatus, setLicenseStatus] = useState<'active' | 'locked'>('locked');
+  const [licenseDaysLeft, setLicenseDaysLeft] = useState<number>(0);
 
   const checkLicenseStatus = (settings: any) => {
     // Check Firebase/store license status first
@@ -467,6 +454,41 @@ export default function App() {
 
   useEffect(() => {
     const validateLicense = async () => {
+      // 1. Check local cache first for instant offline startup
+      try {
+        const cachedLicense = await db.table('appMeta').get('cachedLicense');
+        if (cachedLicense && cachedLicense.value) {
+          const license = cachedLicense.value;
+          const isExpired = Date.now() > license.validUntil;
+          if (!isExpired) {
+            useStore.setState({
+              licenseData: license,
+              isLicenseValid: true
+            });
+            setLicenseCheckDone(true);
+            
+            // Background check from Firebase in background if online
+            if (navigator.onLine) {
+              checkDeviceLicense().then((result) => {
+                if (result.isValid && result.license) {
+                  useStore.setState({
+                    licenseData: result.license,
+                    isLicenseValid: true
+                  });
+                } else if (!result.isValid) {
+                  setShowLicenseModal(true);
+                  useStore.setState({ isLicenseValid: false });
+                }
+              }).catch(err => console.warn('Background license check failed:', err));
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load cached license:', err);
+      }
+
+      // 2. Full check if no valid local cache exists
       const result = await checkDeviceLicense();
       
       if (!result.isValid) {
@@ -499,6 +521,12 @@ export default function App() {
     window.addEventListener('resize', checkSize);
     return () => window.removeEventListener('resize', checkSize);
   }, [init]);
+
+  useEffect(() => {
+    import('./services/backgroundSyncWorker').then(({ startBackgroundSync }) => {
+      startBackgroundSync();
+    }).catch(err => console.warn('Failed to start background sync worker:', err));
+  }, []);
 
   useEffect(() => {
     const startKillSwitchListeners = useStore.getState().startKillSwitchListeners;
@@ -729,6 +757,11 @@ export default function App() {
         </main>
       </div>
       <Toaster position="top-right" theme="light" richColors />
+      {!isOnline && (
+        <div className="fixed top-4 right-4 bg-amber-500 border border-amber-600 text-white px-4 py-2.5 rounded-xl z-[10000] shadow-xl font-medium text-sm flex items-center gap-2 animate-bounce">
+          <span className="text-base">📡</span> Offline Mode — Changes will sync when online
+        </div>
+      )}
       {syncError && (
         <div className="fixed bottom-4 right-4 bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl shadow-lg max-w-sm z-[9999] flex flex-col gap-2">
           <div>

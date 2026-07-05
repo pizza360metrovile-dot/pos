@@ -208,6 +208,46 @@ export class RMSDatabase extends Dexie {
     this.version(23).stores({
       kotSnapshots: '++id, orderId, kotNumber'
     });
+
+    this.version(24).stores({
+      settings: '++id, key, isSynced, updatedAt',
+      categories: '++id, name, isSynced, updatedAt',
+      menuItems: '++id, categoryId, name, isActive, isSynced, updatedAt',
+      orders: '++id, createdAt, status, type, isSynced, updatedAt',
+      orderItems: '++id, orderId, menuItemId, isSynced, updatedAt',
+      ingredients: '++id, name, unit, isSynced, updatedAt',
+      recipes: '++id, menuItemId, isSynced, updatedAt',
+      recipeItems: '++id, recipeId, ingredientId, isSynced, updatedAt',
+      stockLog: '++id, ingredientId, createdAt, reason, isSynced, updatedAt',
+      kotSnapshots: '++id, orderId, kotNumber, isSynced, updatedAt',
+      modifierGroups: '++id, menuItemId, name, type, isSynced, updatedAt',
+      modifierOptions: '++id, groupId, label, additionalPrice, isSynced, updatedAt',
+      orderItemModifiers: '++id, orderItemId, modifierGroupId, orderId, isSynced, updatedAt',
+      dealItems: '++id, dealMenuItemId, componentMenuItemId, isSynced, updatedAt',
+      dealOrderComponents: '++id, orderItemId, componentMenuItemId, isSynced, updatedAt',
+      expenses: '++id, title, categoryId, date, createdAt, isSynced, updatedAt',
+      expenseCategories: '++id, name, isSynced, updatedAt',
+      cashiers: '++id, name, isActive, isSynced, updatedAt'
+    }).upgrade(async tx => {
+      const now = Date.now();
+      const tablesToMigrate = [
+        'settings', 'categories', 'menuItems', 'orders', 'orderItems',
+        'ingredients', 'recipes', 'recipeItems', 'stockLog', 'kotSnapshots',
+        'modifierGroups', 'modifierOptions', 'orderItemModifiers', 'dealItems',
+        'dealOrderComponents', 'expenses', 'expenseCategories', 'cashiers'
+      ];
+      for (const table of tablesToMigrate) {
+        try {
+          await tx.table(table).toCollection().modify(item => {
+            if (item.isSynced === undefined) item.isSynced = 1;
+            if (item.updatedAt === undefined) item.updatedAt = item.createdAt || item.date || item.sentAt || now;
+            if (item.createdAt === undefined) item.createdAt = item.updatedAt || now;
+          });
+        } catch (e) {
+          console.warn(`Failed upgrading table ${table} for version 24:`, e);
+        }
+      }
+    });
   }
 }
 
@@ -241,37 +281,17 @@ syncCollections.forEach(tableName => {
 
   table.hook('creating', function(this: any, primKey: any, obj: any, transaction: any) {
     if (transaction?.fromFirestore) return;
-    this.onsuccess = function(actualKey: any) {
-      import('../utils/syncToFirestore').then(({ syncDoc }) => {
-        const dataToSync = { ...obj };
-        if (dataToSync.id === undefined && actualKey !== undefined) {
-          dataToSync.id = actualKey;
-        }
-        syncDoc(tableName, actualKey, dataToSync);
-      }).catch(err => console.warn('Failed to dynamically import syncDoc on creating hook:', err));
-    };
+    obj.isSynced = 0;
+    obj.updatedAt = Date.now();
+    if (obj.createdAt === undefined) {
+      obj.createdAt = Date.now();
+    }
   });
 
   table.hook('updating', function(this: any, mods: any, primKey: any, obj: any, transaction: any) {
     if (transaction?.fromFirestore) return;
-    this.onsuccess = function(updatedObj: any) {
-      import('../utils/syncToFirestore').then(({ syncDoc }) => {
-        const dataToSync = { ...updatedObj };
-        if (dataToSync.id === undefined && primKey !== undefined) {
-          dataToSync.id = primKey;
-        }
-        syncDoc(tableName, primKey, dataToSync);
-      }).catch(err => console.warn('Failed to dynamically import syncDoc on updating hook:', err));
-    };
-  });
-
-  table.hook('deleting', function(this: any, primKey: any, obj: any, transaction: any) {
-    if (transaction?.fromFirestore) return;
-    this.onsuccess = function() {
-      import('../utils/syncToFirestore').then(({ deleteDoc }) => {
-        deleteDoc(tableName, primKey);
-      }).catch(err => console.warn('Failed to dynamically import deleteDoc on deleting hook:', err));
-    };
+    mods.isSynced = 0;
+    mods.updatedAt = Date.now();
   });
 });
 
