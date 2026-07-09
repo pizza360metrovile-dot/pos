@@ -158,6 +158,22 @@ export async function activateLicenseKey(inputKey: string): Promise<Subscription
   await db.table('appMeta').put({
     key: '_lv', value: Date.now() });
 
+  const licenseData: LicenseData = {
+    licenseKey: inputKey,
+    licensedRestaurant: await getRestaurantId(),
+    validUntil: newExpiry,
+    activatedAt: Date.now(),
+    isValid: true,
+    deviceId,
+    restaurantId: await getRestaurantId()
+  };
+
+  await db.table('appMeta').put({
+    key: 'cachedLicense',
+    value: licenseData,
+    cachedAt: Date.now()
+  });
+
   console.log('License saved:', await db.table('appMeta').toArray());
 
   // 5. Query and push payload metadata into Dexie background Sync Queue

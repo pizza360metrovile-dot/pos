@@ -28,8 +28,10 @@ import {
   ShoppingBag,
   DollarSign
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, DEFAULT_SETTINGS } from '../store/useStore';
 import { getRecordsDateRange } from '../utils/businessDayCalculation';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../lib/db';
 
 const COLORS = {
   'Dine-In': '#3B82F6',
@@ -40,8 +42,9 @@ const COLORS = {
 const PIE_COLORS = ['#3B82F6', '#F59E0B', '#10B981'];
 
 export default function PerformanceTab() {
-  const orders = useStore(state => state.orders);
-  const settings = useStore(state => state.settings);
+  const orders = useLiveQuery(() => db.orders.toArray()) || [];
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
 
   // Filters State
   const [selectedRange, setSelectedRange] = useState<'today' | 'yesterday' | 'week' | 'month' | 'allTime' | 'custom'>('today');

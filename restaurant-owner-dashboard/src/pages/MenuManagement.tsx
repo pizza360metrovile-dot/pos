@@ -9,18 +9,28 @@ import {
   ChefHat, Package, LayoutGrid, ListChecks, GripVertical, Settings2,
   ChevronDown, ChevronRight, Gift
 } from 'lucide-react';
-import { useStore, showConfirmModal } from '../store/useStore';
+import { useStore, showConfirmModal, DEFAULT_SETTINGS } from '../store/useStore';
 import { MenuItem, Category, ModifierGroup, ModifierOption } from '../types';
 import { toast } from 'sonner';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../lib/db';
+
 export default function MenuManagement() {
+  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const categories = useLiveQuery(() => db.categories.toArray()) || [];
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
+  const dealItems = useLiveQuery(() => db.dealItems.toArray()) || [];
+  const modifierGroups = useLiveQuery(() => db.modifierGroups.toArray()) || [];
+  const modifierOptions = useLiveQuery(() => db.modifierOptions.toArray()) || [];
+
   const { 
-    menuItems, categories, settings, dealItems,
     addMenuItem, updateMenuItem, deleteMenuItem, saveDealItems,
     addCategory, deleteCategory, updateCategory,
-    modifierGroups, modifierOptions, saveModifierGroup, deleteModifierGroup
+    saveModifierGroup, deleteModifierGroup
   } = useStore();
   
   const [activeTab, setActiveTab] = useState<'items' | 'categories' | 'modifiers'>('items');

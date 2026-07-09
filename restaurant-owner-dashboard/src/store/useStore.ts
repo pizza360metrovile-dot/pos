@@ -219,7 +219,7 @@ const parseId = (idStr: string): number | string => {
 };
 
 
-const DEFAULT_SETTINGS: RestaurantSettings = {
+export const DEFAULT_SETTINGS: RestaurantSettings = {
   name: 'LUX BISTRO',
   address: '123 ELEGANCE WAY, PLATINUM CITY',
   phone: '+1 555 LUXURY',
@@ -1408,14 +1408,15 @@ export const useStore = create<StoreState>((set, get) => ({
       if (settingsSnap.exists()) {
         const storedSyncTS = localStorage.getItem('lastSyncTimestamp');
         const lastSyncTimestamp = storedSyncTS ? parseInt(storedSyncTS, 10) : 0;
+        const ordersCount = await db.orders.count();
 
-        if (lastSyncTimestamp > 0) {
-          console.log('Local DB has sync history. Skipping full collections restoration during setupSync.');
+        if (lastSyncTimestamp > 0 || ordersCount > 0) {
+          console.log('Local DB has sync history or data. Skipping full collections restoration during setupSync (offline-first).');
           // Just update settings to match what's on Firestore, but don't clear or download other tables
           const remoteSettings = settingsSnap.data() as RestaurantSettings;
           await db.settings.put({ key: 'main', value: remoteSettings });
         } else {
-          console.log('Restaurants settings exist on Firestore and no sync history. Restoring collections to local Dexie (first device migration)...');
+          console.log('Restaurants settings exist on Firestore, no local data, and no sync history. Restoring collections to local Dexie (first device migration)...');
           
           // 1. Settings restoration
           const remoteSettings = settingsSnap.data() as RestaurantSettings;
@@ -1500,7 +1501,8 @@ export const useStore = create<StoreState>((set, get) => ({
           expenses,
           expenseCategories,
           cashiers: d_cashiers,
-          isOnline: true
+          isOnline: true,
+          isLoading: false
         });
       } else {
         // Firestore is empty - push local local Dexie data to Firestore (first device migration)
@@ -1522,9 +1524,53 @@ export const useStore = create<StoreState>((set, get) => ({
         }
       }
 
+      // Load local cached data immediately so app is functional even if Firestore sync fails / is retrying
+      try {
+        const categories = await db.categories.toArray();
+        const menuItems = await db.menuItems.toArray();
+        const settingsEntry = await db.settings.where({ key: 'main' }).first();
+        const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+        const orders = await db.orders.orderBy('createdAt').reverse().toArray();
+        const ingredients = await db.ingredients.toArray();
+        const recipes = await db.recipes.toArray();
+        const recipeItems = await db.recipeItems.toArray();
+        const stockLogs = await db.stockLog.orderBy('createdAt').reverse().toArray();
+        const kotSnapshots = await db.kotSnapshots.toArray();
+        const modifierGroups = await db.modifierGroups.toArray();
+        const modifierOptions = await db.modifierOptions.toArray();
+        const dealItems = await db.dealItems.toArray();
+        const dealOrderComponents = await db.dealOrderComponents.toArray();
+        const expenses = await db.expenses.orderBy('date').reverse().toArray();
+        const expenseCategories = await db.expenseCategories.toArray();
+        const d_cashiers = await db.cashiers.toArray();
+
+        set({
+          categories,
+          menuItems,
+          settings: { ...settings, licenseExpiry: get().subscription?.expiryDate },
+          orders,
+          ingredients,
+          recipes,
+          recipeItems,
+          stockLogs,
+          kotSnapshots,
+          modifierGroups,
+          modifierOptions,
+          dealItems,
+          dealOrderComponents,
+          expenses,
+          expenseCategories,
+          cashiers: d_cashiers,
+          isLoading: false, // Dismiss loading spinner immediately!
+          syncError: 'Sync failed, using cached data' // Error banner
+        });
+      } catch (hydrateErr) {
+        console.error('Failed to load local cached data during setupSync fallback:', hydrateErr);
+        set({ isLoading: false });
+      }
+
       if (syncRetryCount >= MAX_RETRIES) {
         console.warn('setupSync: Max retries reached, running in local offline mode');
-        set({ syncError: 'Firestore connection timeout. Using local offline mode.' });
         return; // STOP - Don't retry, run completely in local offline mode
       }
 

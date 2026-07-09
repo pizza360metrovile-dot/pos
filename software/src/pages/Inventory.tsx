@@ -30,16 +30,20 @@ import { Ingredient, RecipeItem, MenuItem, StockLog } from '../types';
 import { format } from 'date-fns';
 import clsx from 'clsx';
 
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../lib/db';
+
 type Tab = 'ingredients' | 'direct-stock' | 'recipes' | 'logs';
 
 export default function Inventory() {
+  const ingredients = useLiveQuery(() => db.ingredients.toArray()) || [];
+  const recipes = useLiveQuery(() => db.recipes.toArray()) || [];
+  const recipeItems = useLiveQuery(() => db.recipeItems.toArray()) || [];
+  const stockLogs = useLiveQuery(() => db.stockLog.toArray()) || [];
+  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const categories = useLiveQuery(() => db.categories.toArray()) || [];
+
   const { 
-    ingredients, 
-    recipes, 
-    recipeItems, 
-    stockLogs, 
-    menuItems,
-    categories,
     addIngredient, 
     updateIngredient, 
     deleteIngredient,

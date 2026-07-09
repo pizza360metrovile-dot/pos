@@ -7,8 +7,9 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import { ShoppingCart, Plus, Minus, Trash2, Printer, CheckCircle, User, CreditCard, Utensils, Send, RotateCcw, X, Clock, AlertCircle, Truck, ShieldCheck, Square, CheckSquare, Edit3, Flame } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { toast } from 'sonner';
-import { useStore, showConfirmModal } from '../store/useStore';
+import { useStore, showConfirmModal, DEFAULT_SETTINGS } from '../store/useStore';
 import { db } from '../lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { MenuItem, OrderType, Order, OrderItem, KotSnapshot, OrderItemModifier } from '../types';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -19,16 +20,26 @@ import DealModal from '../components/DealModal';
 import { getNextKOTNumber } from '../utils/kotNumbering';
 
 export default function POS() {
+  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const categories = useLiveQuery(() => db.categories.toArray()) || [];
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
+  const orders = useLiveQuery(() => db.orders.toArray()) || [];
+  const kotSnapshots = useLiveQuery(() => db.kotSnapshots.toArray()) || [];
+  const modifierGroups = useLiveQuery(() => db.modifierGroups.toArray()) || [];
+  const dealItems = useLiveQuery(() => db.dealItems.toArray()) || [];
+  const cashiers = useLiveQuery(() => db.cashiers.toArray()) || [];
+
   const { 
-    menuItems, categories, settings, addOrder, updateOrder, deleteOrder, orders,
+    addOrder, updateOrder, deleteOrder,
     cart, setCart, clearCart, addToCart, addDealToCart, updateQuantity, removeFromCart, updateCartItem,
     orderType, updateOrderType, customerName, setCustomerName, 
     tableNumber, setTableNumber, activeOrder, setActiveOrder,
     retrieveOrder: storeRetrieveOrder, cancelHeldOrder: storeCancelHeldOrder,
-    kotSnapshots, addKotSnapshot, modifierGroups, dealItems,
+    addKotSnapshot,
     discountType, setDiscountType, discountValue, setDiscountValue,
     deliveryCharge, setDeliveryCharge,
-    cashiers = [], activeCashierName, setActiveCashierName, cancelOrder
+    activeCashierName, setActiveCashierName, cancelOrder
   } = useStore();
   
   const [activeCategory, setActiveCategory] = useState<string>('all');

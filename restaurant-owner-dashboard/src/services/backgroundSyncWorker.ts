@@ -179,11 +179,11 @@ async function pullRemoteChanges(restaurantId: string): Promise<boolean> {
         ? query(
             collection(fireStore, 'restaurants', restaurantId, tableName),
             where('updatedAt', '>', lastSync),
-            limit(100)
+            limit(50)
           )
         : query(
             collection(fireStore, 'restaurants', restaurantId, tableName),
-            limit(100)
+            limit(50)
           );
       
       const snapshot = await getDocs(q);
@@ -224,10 +224,11 @@ async function pullRemoteChanges(restaurantId: string): Promise<boolean> {
     }
   }
   
-  // Persist lastSyncTimestamp to localStorage ONLY AFTER fully successful sync completes
-  if (!syncFailed) {
+  // Persist lastSyncTimestamp to localStorage ONLY AFTER successful pull containing data
+  if (!syncFailed && totalPulled > 0) {
     setLastSyncTimestamp(syncStartTime);
-  } else {
+    console.log(`💾 Persisted lastSyncTimestamp: ${syncStartTime}`);
+  } else if (syncFailed) {
     console.warn('⚠️ Some tables failed to sync. lastSyncTimestamp was NOT updated.');
   }
   
