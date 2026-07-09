@@ -91,96 +91,106 @@ export async function verifyLicenseWithBackend(
   error?: string
 }> {
   try {
-    // Step 1: Decode Base64
-    let decodedKey: string
+    const trimmedKey = licenseKey.trim();
+    if (!trimmedKey) {
+      return {
+        isValid: false,
+        restaurantName: '',
+        validUntil: 0,
+        error: 'Invalid or Expired License Key',
+      };
+    }
+
+    // Step A: Decode Base64 and split by pipe symbol (|) or colon (:) for compatibility
+    let decodedKey: string;
     try {
-      decodedKey = atob(licenseKey)
+      decodedKey = atob(trimmedKey);
     } catch (err) {
       return {
         isValid: false,
         restaurantName: '',
         validUntil: 0,
-        error: 'Invalid license key format (decode failed)',
-      }
+        error: 'Invalid or Expired License Key',
+      };
     }
 
-    // Step 2: Parse timestamp and signature
-    const parts = decodedKey.split('|')
-    if (parts.length !== 2) {
+    const parts = decodedKey.includes('|') ? decodedKey.split('|') : decodedKey.split(':');
+    if (parts.length < 2) {
       return {
         isValid: false,
         restaurantName: '',
         validUntil: 0,
-        error: 'Invalid license key format (missing components)',
-      }
+        error: 'Invalid or Expired License Key',
+      };
     }
 
-    const [timestampStr, providedSignature] = parts
-    const timestamp = parseInt(timestampStr, 10)
+    const [timestampStr, providedSignature] = parts;
+    const timestamp = parseInt(timestampStr, 10);
 
-    // Step 3: Validate timestamp is a number
     if (isNaN(timestamp)) {
       return {
         isValid: false,
         restaurantName: '',
         validUntil: 0,
-        error: 'Invalid license key format (invalid timestamp)',
-      }
+        error: 'Invalid or Expired License Key',
+      };
     }
 
-    // Step 4: Regenerate signature to verify authenticity
+    // Step B: Perform an expiration check.
+    // 6 months is defined as: 180 days * 24 hours * 60 mins * 60 secs * 1000 ms = 15552000000 ms
+    const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
+    const isExpired = Date.now() - timestamp > SIX_MONTHS_MS;
+    if (isExpired) {
+      return {
+        isValid: false,
+        restaurantName: '',
+        validUntil: 0,
+        error: 'Expired License',
+      };
+    }
+
+    // Step C: Re-generate the SHA-256 hash locally using normalized restaurantId
     const normalizedRestaurantId = restaurantId
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '-')
       .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'lux-bistro'
+      .replace(/^-|-$/g, '') || 'lux-bistro';
 
-    const rawString = 
-      normalizedRestaurantId + timestamp + SECRET_SALT
+    const rawString = normalizedRestaurantId + timestamp + SECRET_SALT;
+    const expectedSignature = await sha256(rawString);
 
-    const expectedSignature = await sha256(rawString)
-
-    // Step 5: Compare signatures
+    // Step D: Compare the newly calculated hash with the extracted signature.
     if (providedSignature !== expectedSignature) {
       return {
         isValid: false,
         restaurantName: '',
         validUntil: 0,
-        error: 'License key is invalid or tampered',
-      }
+        error: 'Invalid or Expired License Key',
+      };
     }
 
-    // Step 6: Check license age (generated keys are valid for 365 days)
-    const now = Date.now()
-    const licenseAge = now - timestamp
-    const maxLicenseAge = LICENSE_VALIDITY_DAYS * 86400000 // ms
-
-    if (licenseAge > maxLicenseAge) {
-      return {
-        isValid: false,
-        restaurantName: '',
-        validUntil: 0,
-        error: 'License key has expired',
-      }
+    // Graceful Local Fallback: Save timestamp and key to local storage
+    try {
+      localStorage.setItem('license_key', trimmedKey);
+      localStorage.setItem('license_timestamp', String(timestamp));
+    } catch (lsErr) {
+      console.warn('Failed to save to localStorage:', lsErr);
     }
 
-    // Step 7: Calculate validity period
-    // License is valid from generation until 365 days later
-    const validUntil = timestamp + maxLicenseAge
+    const validUntil = timestamp + SIX_MONTHS_MS;
 
-    // Step 8: All checks passed
     return {
       isValid: true,
       restaurantName: normalizedRestaurantId,
       validUntil: validUntil,
-    }
+    };
   } catch (error) {
-    console.error('License verification error:', error)
+    console.error('License verification error:', error);
     return {
       isValid: false,
       restaurantName: '',
       validUntil: 0,
-      error: 'License verification failed. Please try again.',
-    }
+      error: 'Invalid or Expired License Key',
+    };
   }
 }

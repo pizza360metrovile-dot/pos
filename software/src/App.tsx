@@ -27,6 +27,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Toaster } from 'sonner';
 import { useStore } from './store/useStore';
+import { checkActualConnection } from './utils/network';
 import { format } from 'date-fns';
 import { ShutdownScreen, MaintenanceScreen } from './components/KillSwitchScreens';
 
@@ -43,6 +44,7 @@ import LicenseLockScreen from './components/LicenseLockScreen';
 import LicenseModal from './components/LicenseModal';
 import { checkDeviceLicense } from './services/licenseService';
 import { db } from './lib/db';
+import { verifyLicenseWithBackend, getRestaurantId as getConfigRestaurantId, getRestaurantInfo as getConfigRestaurantInfo } from './utils/licenseValidator';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -401,13 +403,25 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    const updateOnline = () => {
+      checkActualConnection().then(online => {
+        setIsOnline(online);
+      });
+    };
+
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+
+    // Initial check on mount
+    updateOnline();
+
+    // Periodic check every 30 seconds for robust Electron support
+    const interval = setInterval(updateOnline, 30000);
+
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+      clearInterval(interval);
     };
   }, []);
 
@@ -454,7 +468,35 @@ export default function App() {
 
   useEffect(() => {
     const validateLicense = async () => {
-      // 1. Check local cache first for instant offline startup
+      // 1. Check local storage first as a graceful offline fallback
+      const localKey = localStorage.getItem('license_key');
+      const localTimestamp = localStorage.getItem('license_timestamp');
+      if (localKey && localTimestamp) {
+        try {
+          const verification = await verifyLicenseWithBackend(localKey, getConfigRestaurantId());
+          if (verification.isValid) {
+            const license = {
+              licenseKey: localKey,
+              licensedRestaurant: getConfigRestaurantInfo().name,
+              validUntil: verification.validUntil,
+              activatedAt: parseInt(localTimestamp, 10),
+              isValid: true,
+              deviceId: 'local-storage-fallback',
+              restaurantId: getConfigRestaurantId(),
+            };
+            useStore.setState({
+              licenseData: license,
+              isLicenseValid: true
+            });
+            setLicenseCheckDone(true);
+            return;
+          }
+        } catch (err) {
+          console.warn('LocalStorage license fallback validation failed:', err);
+        }
+      }
+
+      // 2. Check local Dexie cache next
       try {
         const cachedLicense = await db.table('appMeta').get('cachedLicense');
         if (cachedLicense && cachedLicense.value) {
@@ -468,7 +510,8 @@ export default function App() {
             setLicenseCheckDone(true);
             
             // Background check from Firebase in background if online
-            if (navigator.onLine) {
+            const online = await checkActualConnection();
+            if (online) {
               checkDeviceLicense().then((result) => {
                 if (result.isValid && result.license) {
                   useStore.setState({
@@ -476,10 +519,18 @@ export default function App() {
                     isLicenseValid: true
                   });
                 } else if (!result.isValid) {
-                  setShowLicenseModal(true);
-                  useStore.setState({ isLicenseValid: false });
+                  // Only lock out if the local cached license has actually expired or if the failure was not a connection timeout/handshake issue
+                  const isLocalExpired = Date.now() > license.validUntil;
+                  if (isLocalExpired || (result.message !== 'License verification failed' && result.message !== 'No license found. Please enter license key.')) {
+                    setShowLicenseModal(true);
+                    useStore.setState({ isLicenseValid: false });
+                  } else {
+                    console.warn('Background check returned invalid but local cache is still unexpired. Bypassing startup lockout.');
+                  }
                 }
-              }).catch(err => console.warn('Background license check failed:', err));
+              }).catch(err => {
+                console.error('Deep logging for background license check promise rejection:', err);
+              });
             }
             return;
           }
@@ -488,16 +539,21 @@ export default function App() {
         console.warn('Failed to load cached license:', err);
       }
 
-      // 2. Full check if no valid local cache exists
-      const result = await checkDeviceLicense();
-      
-      if (!result.isValid) {
+      // 3. Full check if no valid local cache exists
+      try {
+        const result = await checkDeviceLicense();
+        
+        if (!result.isValid) {
+          setShowLicenseModal(true);
+        } else if (result.license) {
+          useStore.setState({ 
+            licenseData: result.license,
+            isLicenseValid: true
+          });
+        }
+      } catch (err) {
+        console.error('Deep logging for full license check promise rejection:', err);
         setShowLicenseModal(true);
-      } else if (result.license) {
-        useStore.setState({ 
-          licenseData: result.license,
-          isLicenseValid: true
-        });
       }
       
       setLicenseCheckDone(true);

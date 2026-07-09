@@ -5,9 +5,10 @@
 
 import { create } from 'zustand';
 import { db } from '../lib/db';
+import { checkActualConnection } from '../utils/network';
 import { MenuItem, Category, Order, OrderItem, RestaurantSettings, OrderType, Ingredient, Recipe, RecipeItem, StockLog, KotSnapshot, ModifierGroup, ModifierOption, OrderItemModifier, DealItem, DealOrderComponent, Expense, ExpenseCategory, Cashier } from '../types';
 import { toast } from 'sonner';
-import { fireStore } from '../lib/firebase';
+import { fireStore, safeEnableNetwork, safeDisableNetwork } from '../lib/firebase';
 import { getLocalSubscription, activateLicenseKey, triggerBackgroundSync, SubscriptionSettings, getOrCreateDeviceId, computeChecksum, getRestaurantId } from '../services/licenseService';
 import { LicenseData } from '../utils/licenseValidator';
 import { getBusinessDate, initializeBusinessDayCutoff } from '../utils/businessDayCalculation';
@@ -20,9 +21,7 @@ import {
   getDocs, 
   writeBatch,
   Timestamp,
-  getDoc,
-  enableNetwork,
-  disableNetwork
+  getDoc
 } from 'firebase/firestore';
 
 interface AppUser {
@@ -771,7 +770,7 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ cloudSync: isSyncEnabled });
     if (!isSyncEnabled && fireStore) {
       try {
-        await disableNetwork(fireStore);
+        await safeDisableNetwork();
         set({ isOnline: false });
       } catch (err) {
         console.warn('Failed to disable firestore network on init:', err);
@@ -801,17 +800,39 @@ export const useStore = create<StoreState>((set, get) => ({
     }
 
     // 3. Online/Offline Listeners
-    window.addEventListener('online', () => {
-      if (get().cloudSync) {
-        set({ isOnline: true });
-        triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
-      }
-    });
-    window.addEventListener('offline', () => {
-      if (get().cloudSync) {
-        set({ isOnline: false });
-      }
-    });
+    const updateOnlineStatus = () => {
+      checkActualConnection().then((online) => {
+        if (get().cloudSync) {
+          if (online) {
+            set({ isOnline: true });
+            if (fireStore) {
+              safeEnableNetwork()
+                .then(() => {
+                  console.log('Firestore network connection enabled successfully via periodic check.');
+                  return triggerBackgroundSync();
+                })
+                .catch(err => console.warn('Failed to enable Firestore network or sync on network restore:', err));
+            } else {
+              triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+            }
+          } else {
+            set({ isOnline: false });
+            if (fireStore) {
+              safeDisableNetwork().catch(err => console.warn('Failed to disable Firestore network on offline status check:', err));
+            }
+          }
+        }
+      });
+    };
+
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+
+    // Run initial actual connectivity check on startup to bypass Electron native online checks false-negatives
+    updateOnlineStatus();
+
+    // Set a periodic 30s active network connection check to handle Electron false-positives/negatives robustly
+    const periodicNetworkCheck = setInterval(updateOnlineStatus, 30000);
 
     // 4. Activity Tracking (8h timeout)
     const updateActivity = () => {
@@ -1385,7 +1406,7 @@ export const useStore = create<StoreState>((set, get) => ({
       return idStr;
     };
 
-    const getDocWithTimeout = (docRef: any, timeoutMs: number = 3000) => {
+    const getDocWithTimeout = (docRef: any, timeoutMs: number = 10000) => {
       return Promise.race([
         getDoc(docRef),
         new Promise<never>((_, reject) =>
@@ -1395,7 +1416,7 @@ export const useStore = create<StoreState>((set, get) => ({
     };
 
     try {
-      const settingsSnap = await getDocWithTimeout(doc(fireStore, 'restaurants', uid), 3000);
+      const settingsSnap = await getDocWithTimeout(doc(fireStore, 'restaurants', uid), 10000);
       
       // Success! Reset tracking state
       syncRetryCount = 0;
@@ -1513,12 +1534,12 @@ export const useStore = create<StoreState>((set, get) => ({
       }
 
     } catch (err: any) {
-      console.warn('Initial sync check / migration failed or ran offline:', err.message);
+      console.warn('Initial sync check / migration failed or ran offline:', err.message || err);
       
       if (err.message?.toLowerCase().includes('offline') || err.code === 'unavailable' || err.message?.toLowerCase().includes('timeout')) {
         set({ isOnline: false });
         try {
-          await disableNetwork(fireStore);
+          await safeDisableNetwork();
         } catch (networkErr) {
           console.warn('Failed to disable Firestore network during fallback:', networkErr);
         }
@@ -1604,7 +1625,7 @@ export const useStore = create<StoreState>((set, get) => ({
         }
         set({ syncError: null });
 
-        await enableNetwork(fireStore);
+        await safeEnableNetwork();
         await db.appMeta.put({ key: '_sync', value: true });
         set({ cloudSync: true, isOnline: window.navigator.onLine });
         
@@ -1722,7 +1743,7 @@ export const useStore = create<StoreState>((set, get) => ({
           toast.success('Cloud sync enabled');
         }
       } else {
-        await disableNetwork(fireStore);
+        await safeDisableNetwork();
         await db.appMeta.put({ key: '_sync', value: false });
         
         // No listeners to stop since we use pure one-time fetches
@@ -2961,6 +2982,13 @@ export const useStore = create<StoreState>((set, get) => ({
         isLicenseSyncFailed: false
       }));
     } catch (err: any) {
+      console.error("DEEP LOGGING: Manual licensing sync failed (isLicenseSyncFailed set to true)", {
+        errorMessage: err?.message || err,
+        errorName: err?.name,
+        errorCode: err?.code,
+        errorStack: err?.stack,
+        fullError: err
+      });
       console.warn("Manual licensing sync failed:", err);
       set({ isLicenseSyncFailed: true });
     }

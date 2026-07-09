@@ -7,7 +7,13 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager, 
+  enableNetwork, 
+  disableNetwork 
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -29,29 +35,68 @@ let app: any = null;
 let auth: any = null;
 let fireStore: any = null;
 
+export async function safeEnableNetwork() {
+  if (!fireStore) return;
+  if ((fireStore as any)._terminated) {
+    console.warn('Firestore instance is terminated. Cannot enable network.');
+    return;
+  }
+  try {
+    await enableNetwork(fireStore);
+    console.log('Firestore network connection enabled successfully.');
+  } catch (err: any) {
+    console.warn('Failed to enable Firestore network safely:', err.message || err);
+  }
+}
+
+export async function safeDisableNetwork() {
+  if (!fireStore) return;
+  if ((fireStore as any)._terminated) {
+    console.warn('Firestore instance is terminated. Cannot disable network.');
+    return;
+  }
+  try {
+    await disableNetwork(fireStore);
+    console.log('Firestore network connection disabled successfully.');
+  } catch (err: any) {
+    console.warn('Failed to disable Firestore network safely:', err.message || err);
+  }
+}
+
 if (isValidConfig) {
   try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    fireStore = getFirestore(app);
-
-    // Enable offline persistence
-    enableIndexedDbPersistence(fireStore).catch((err) => {
-      if (err.code === 'failed-precondition') {
-        // Multiple tabs open, persistence can only be enabled
-        // in one tab at a a time.
-        console.warn('Firestore persistence failed: Multiple tabs open');
-      } else if (err.code === 'unimplemented') {
-        // The current browser does not support all of the
-        // features required to enable persistence
-        console.warn('Firestore persistence failed: Browser not supported');
-      }
+    
+    // Fix Firestore Multi-Tab Sync Crash (Assertion Failed) using the modern cache framework
+    fireStore = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      })
     });
+
+    console.log('Firestore initialized with modern persistentLocalCache & persistentMultipleTabManager.');
+
+    // Handle online/offline events at firebase client level to trigger network connection states
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', async () => {
+        await safeEnableNetwork();
+      });
+
+      window.addEventListener('offline', async () => {
+        await safeDisableNetwork();
+      });
+    }
+
   } catch (err) {
     console.error('Failed to initialize Firebase services:', err);
   }
 } else {
   console.warn('Firebase configuration is missing or invalid. Running in offline/local-only mode.');
+}
+
+export async function reconnectFirestore() {
+  await safeEnableNetwork();
 }
 
 export { auth, fireStore };

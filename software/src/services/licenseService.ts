@@ -7,6 +7,7 @@ import { db } from '../lib/db';
 import { fireStore } from '../lib/firebase';
 import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { LicenseData } from '../utils/licenseValidator';
+import { RESTAURANT_ID } from '../config/restaurantConfig';
 
 export const SECRET_SALT = "78R4JHGFpizza360metrovileEWIUH34@12<D>";
 
@@ -18,6 +19,10 @@ export interface SubscriptionSettings {
  * Returns the unique registered name/ID of the POS.
  */
 export async function getRestaurantId(): Promise<string> {
+  const id = RESTAURANT_ID;
+  if (id) {
+    return id.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'lux-bistro';
+  }
   const settingsEntry = await db.settings.where({ key: 'main' }).first();
   const name = settingsEntry?.value?.name || 'LUX BISTRO';
   // Standardize alphanumeric POS registry name/ID representation
@@ -49,33 +54,53 @@ export async function validateKey(inputKey: string): Promise<{ timestamp: string
 
   try {
     const decoded = atob(inputKey.trim());
-    if (decoded.startsWith('{') && decoded.endsWith('}')) {
-      const parsed = JSON.parse(decoded);
-      timestamp = String(parsed.timestamp || '');
-      signature = parsed.signature || '';
+    const parts = decoded.includes('|') ? decoded.split('|') : decoded.split(':');
+    if (parts.length >= 2) {
+      timestamp = parts[0];
+      signature = parts[1];
     } else {
-      const parts = decoded.includes(':') ? decoded.split(':') : decoded.split('|').filter(Boolean);
-      if (parts.length >= 2) {
-        timestamp = parts[0];
-        signature = parts[1];
-      } else {
-        throw new Error();
-      }
+      throw new Error();
     }
   } catch (e) {
-    throw new Error("Invalid Key format (must be Base64-encoded)");
+    throw new Error("Invalid or Expired License Key");
   }
 
   if (!timestamp || !signature) {
-    throw new Error("Invalid key structure (missing timestamp or signature)");
+    throw new Error("Invalid or Expired License Key");
   }
 
+  const timestampNum = parseInt(timestamp, 10);
+  if (isNaN(timestampNum)) {
+    throw new Error("Invalid or Expired License Key");
+  }
+
+  // Step B: Expiration check (6 months = 180 days)
+  const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
+  if (Date.now() - timestampNum > SIX_MONTHS_MS) {
+    throw new Error("Expired License");
+  }
+
+  // Step C: Normalize restaurant ID
   const restaurantId = await getRestaurantId();
-  const expectedMessage = restaurantId + timestamp + SECRET_SALT;
+  const normalizedRestaurantId = restaurantId
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'lux-bistro';
+
+  const expectedMessage = normalizedRestaurantId + timestamp + SECRET_SALT;
   const expectedHash = await hashSHA256(expectedMessage);
 
   if (expectedHash !== signature) {
-    throw new Error("Invalid License Key for this POS");
+    throw new Error("Invalid or Expired License Key");
+  }
+
+  // Save to localStorage as a graceful local fallback
+  try {
+    localStorage.setItem('license_key', inputKey.trim());
+    localStorage.setItem('license_timestamp', timestamp);
+  } catch (lsErr) {
+    console.warn('Failed to save to localStorage:', lsErr);
   }
 
   return { timestamp, signature };
@@ -259,7 +284,7 @@ export async function generateTestingKey(restaurantId: string, timestamp: number
 const uid = 'operator-1'; // Or get from auth
 
 /**
- * Fetch license data from Firebase
+ * Fetch license data from Firebase with a robust timeout fallback
  */
 export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
   try {
@@ -268,7 +293,13 @@ export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
       return null;
     }
     const restaurantDoc = doc(fireStore, 'restaurants', uid);
-    const docSnap = await getDoc(restaurantDoc);
+    
+    // Use a robust 6-second timeout for fetching license from Firebase
+    const getDocPromise = getDoc(restaurantDoc);
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('Firebase connection handshake timeout')), 6000)
+    );
+    const docSnap = await Promise.race([getDocPromise, timeoutPromise]);
     
     if (docSnap.exists() && docSnap.data().license) {
       return docSnap.data().license as LicenseData;
@@ -276,8 +307,8 @@ export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
     
     return null;
   } catch (error: any) {
-    if (error?.message?.includes('offline') || error?.code === 'unavailable') {
-      console.warn('Failed to fetch license from Firebase because client is offline. Will attempt local fallback.');
+    if (error?.message?.includes('offline') || error?.code === 'unavailable' || error?.message?.includes('timeout')) {
+      console.warn('Failed to fetch license from Firebase because client is offline or handshake timed out. Will attempt local fallback.');
     } else {
       console.error('Failed to fetch license from Firebase:', error);
     }
@@ -334,48 +365,67 @@ export async function saveLicenseToFirebase(
 }
 
 /**
- * Check if device has valid license
+ * Check if device has valid license, prioritizing unexpired local cache on connection failures
  */
 export async function checkDeviceLicense(): Promise<{
   isValid: boolean
   license?: LicenseData
   message: string
 }> {
+  let localValidLicense: LicenseData | null = null;
+  
+  // 1. Try local cached license first for instant offline startup
   try {
-    // 1. Try local cached license first for instant offline startup
-    try {
-      const cachedLicense = await db.table('appMeta').get('cachedLicense');
-      if (cachedLicense && cachedLicense.value) {
-        const license = cachedLicense.value as LicenseData;
-        const isExpired = Date.now() > license.validUntil;
-        if (!isExpired) {
-          console.log('Valid cached license found in IndexedDB (offline-first):', license.licenseKey);
-          return {
-            isValid: true,
-            license: license,
-            message: 'License valid (cached)'
-          };
-        }
+    const cachedLicense = await db.table('appMeta').get('cachedLicense');
+    if (cachedLicense && cachedLicense.value) {
+      const license = cachedLicense.value as LicenseData;
+      const isExpired = Date.now() > license.validUntil;
+      if (!isExpired) {
+        console.log('Valid local cached license found in IndexedDB:', license.licenseKey);
+        localValidLicense = license;
+      } else {
+        console.warn('Local cached license has expired.');
       }
-    } catch (cacheErr) {
-      console.warn('Failed to read license from local cache:', cacheErr);
+    }
+  } catch (cacheErr) {
+    console.warn('Failed to read license from local cache:', cacheErr);
+  }
+
+  // 2. Try fetching from Firebase with timeout safety
+  let firebaseLicense: LicenseData | null = null;
+  let fetchFailed = false;
+  
+  try {
+    firebaseLicense = await fetchLicenseFromFirebase();
+  } catch (firebaseErr) {
+    console.warn('Firebase license check failed or timed out:', firebaseErr);
+    fetchFailed = true;
+  }
+
+  if (fetchFailed || !firebaseLicense) {
+    // Firebase connection failure / handshake timeout: Gracefully degrade using localCachedLicense
+    if (localValidLicense) {
+      console.log('Firebase handshake failed/unreachable. Allowing app startup in gracefully degraded mode with cached license.');
+      return {
+        isValid: true,
+        license: localValidLicense,
+        message: 'License valid (cached fallback)'
+      };
     }
 
-    // 2. Fallback to Firebase
-    let firebaseLicense = await fetchLicenseFromFirebase();
-    
-    if (!firebaseLicense) {
-      console.log('No license from Firebase, checking local offline license fallback...');
-      try {
-        const ki = await db.table('appMeta').get('_ki');
-        const xe = await db.table('appMeta').get('_xe');
-        const di = await db.table('appMeta').get('_di');
-        const cs = await db.table('appMeta').get('_cs');
-        const ia = await db.table('appMeta').get('_ia');
+    console.log('No valid Firebase license or local cache. Checking local offline cryptographic license fallback...');
+    try {
+      const ki = await db.table('appMeta').get('_ki');
+      const xe = await db.table('appMeta').get('_xe');
+      const di = await db.table('appMeta').get('_di');
+      const cs = await db.table('appMeta').get('_cs');
+      const ia = await db.table('appMeta').get('_ia');
 
-        if (ki?.value && xe?.value && di?.value && cs?.value && ia?.value === true) {
-          const computed = await computeChecksum(ki.value, Number(xe.value), di.value);
-          if (cs.value === computed) {
+      if (ki?.value && xe?.value && di?.value && cs?.value && ia?.value === true) {
+        const computed = await computeChecksum(ki.value, Number(xe.value), di.value);
+        if (cs.value === computed) {
+          const isExpired = Date.now() > Number(xe.value);
+          if (!isExpired) {
             firebaseLicense = {
               licenseKey: ki.value,
               licensedRestaurant: await getRestaurantId(),
@@ -385,59 +435,54 @@ export async function checkDeviceLicense(): Promise<{
               deviceId: di.value,
               restaurantId: await getRestaurantId()
             };
-            console.log('Valid local offline license found and verified.');
-            // Also cache it
+            console.log('Valid local offline license found and verified cryptographically.');
+            // Save to cachedLicense
             await db.table('appMeta').put({
               key: 'cachedLicense',
               value: firebaseLicense,
               cachedAt: Date.now()
             });
+          } else {
+            console.warn('Local offline license is expired.');
           }
         }
-      } catch (localErr) {
-        console.warn('Failed to verify local offline license:', localErr);
       }
-    } else {
-      // Successfully fetched from Firebase, let's cache it
-      try {
-        await db.table('appMeta').put({
-          key: 'cachedLicense',
-          value: firebaseLicense,
-          cachedAt: Date.now()
-        });
-      } catch (cacheErr) {
-        console.warn('Failed to save Firebase license to local cache:', cacheErr);
-      }
+    } catch (localErr) {
+      console.warn('Failed to verify local offline license:', localErr);
     }
-    
-    if (!firebaseLicense) {
-      return {
-        isValid: false,
-        message: 'No license found. Please enter license key.'
-      };
+  } else {
+    // Successfully fetched from Firebase, cache it locally
+    try {
+      await db.table('appMeta').put({
+        key: 'cachedLicense',
+        value: firebaseLicense,
+        cachedAt: Date.now()
+      });
+    } catch (cacheErr) {
+      console.warn('Failed to save Firebase license to local cache:', cacheErr);
     }
-    
-    // Check expiration
-    const isExpired = Date.now() > firebaseLicense.validUntil;
-    
-    if (isExpired) {
-      return {
-        isValid: false,
-        message: 'License expired. Please renew.'
-      };
-    }
-    
-    // License valid
-    return {
-      isValid: true,
-      license: firebaseLicense,
-      message: 'License valid'
-    };
-  } catch (error) {
-    console.error('License check failed:', error);
+  }
+
+  if (!firebaseLicense) {
     return {
       isValid: false,
-      message: 'License verification failed'
+      message: 'No license found. Please enter license key.'
     };
   }
+
+  // Check expiration of the fetched / fallback license
+  const isExpired = Date.now() > firebaseLicense.validUntil;
+  
+  if (isExpired) {
+    return {
+      isValid: false,
+      message: 'License expired. Please renew.'
+    };
+  }
+
+  return {
+    isValid: true,
+    license: firebaseLicense,
+    message: 'License valid'
+  };
 }
