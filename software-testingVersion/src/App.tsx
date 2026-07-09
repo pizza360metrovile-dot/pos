@@ -222,7 +222,7 @@ const Sidebar = ({
              )} />
              {isExpanded && (
                <span className={cn("text-[9px] font-black uppercase tracking-widest", !cloudSync ? "text-gray-400" : "text-text-sidebar")}>
-                 {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
+                 {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Online')))}
                </span>
              )}
              
@@ -350,7 +350,7 @@ const TopBar = ({
               "text-[10px] font-bold uppercase tracking-tight", 
               !cloudSync ? "text-gray-400" : (!isOnline ? "text-danger" : (isQuotaExceeded || isLicenseSyncFailed ? "text-amber-500" : "text-success"))
             )}>
-              {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
+              {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Offline')))}
             </span>
           </div>
         </div>
@@ -376,6 +376,7 @@ const TopBar = ({
 };
 
 export default function App() {
+  const location = useLocation();
   const init = useStore(state => state.init);
   const isLoading = useStore(state => state.isLoading);
   const user = useStore(state => state.user);
@@ -386,6 +387,8 @@ export default function App() {
   const globalShutdown = useStore(state => state.globalShutdown);
   const restaurantShutdown = useStore(state => state.restaurantShutdown);
   const maintenanceMode = useStore(state => state.maintenanceMode);
+  const syncError = useStore(state => state.syncError);
+  const setupSync = useStore(state => state.setupSync);
   
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const [isMobileMode, setIsMobileMode] = useState(false);
@@ -394,6 +397,19 @@ export default function App() {
   const [licenseCheckDone, setLicenseCheckDone] = useState(false);
   const isLicenseValid = useStore(state => state.isLicenseValid);
   const licenseData = useStore(state => state.licenseData);
+
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const [licenseStatus, setLicenseStatus] = useState<'active' | 'locked'>('locked');
   const [licenseDaysLeft, setLicenseDaysLeft] = useState<number>(0);
@@ -438,6 +454,41 @@ export default function App() {
 
   useEffect(() => {
     const validateLicense = async () => {
+      // 1. Check local cache first for instant offline startup
+      try {
+        const cachedLicense = await db.table('appMeta').get('cachedLicense');
+        if (cachedLicense && cachedLicense.value) {
+          const license = cachedLicense.value;
+          const isExpired = Date.now() > license.validUntil;
+          if (!isExpired) {
+            useStore.setState({
+              licenseData: license,
+              isLicenseValid: true
+            });
+            setLicenseCheckDone(true);
+            
+            // Background check from Firebase in background if online
+            if (navigator.onLine) {
+              checkDeviceLicense().then((result) => {
+                if (result.isValid && result.license) {
+                  useStore.setState({
+                    licenseData: result.license,
+                    isLicenseValid: true
+                  });
+                } else if (!result.isValid) {
+                  setShowLicenseModal(true);
+                  useStore.setState({ isLicenseValid: false });
+                }
+              }).catch(err => console.warn('Background license check failed:', err));
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load cached license:', err);
+      }
+
+      // 2. Full check if no valid local cache exists
       const result = await checkDeviceLicense();
       
       if (!result.isValid) {
@@ -470,6 +521,12 @@ export default function App() {
     window.addEventListener('resize', checkSize);
     return () => window.removeEventListener('resize', checkSize);
   }, [init]);
+
+  useEffect(() => {
+    import('./services/backgroundSyncWorker').then(({ startBackgroundSync }) => {
+      startBackgroundSync();
+    }).catch(err => console.warn('Failed to start background sync worker:', err));
+  }, []);
 
   useEffect(() => {
     const startKillSwitchListeners = useStore.getState().startKillSwitchListeners;
@@ -700,6 +757,35 @@ export default function App() {
         </main>
       </div>
       <Toaster position="top-right" theme="light" richColors />
+
+      {syncError && (
+        <div className="fixed bottom-4 right-4 bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl shadow-lg max-w-sm z-[9999] flex flex-col gap-2">
+          <div>
+            <p className="font-bold text-sm flex items-center gap-1.5 text-red-900">
+              <svg className="w-4 h-4 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Connection Error
+            </p>
+            <p className="text-xs text-red-700 mt-1 leading-relaxed">{syncError}</p>
+          </div>
+          <button 
+            onClick={() => {
+              if (user) {
+                setupSync(user.uid);
+              } else {
+                window.location.reload();
+              }
+            }}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-1.5 px-3 rounded-lg text-xs transition-colors duration-150 flex items-center justify-center gap-1.5 shadow-sm"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 3v5M19 8h-5" />
+            </svg>
+            Retry Connection
+          </button>
+        </div>
+      )}
       <GlobalModals />
     </div>
   );

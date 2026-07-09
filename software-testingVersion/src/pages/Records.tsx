@@ -33,7 +33,7 @@ import {
   EyeOff,
   Package
 } from 'lucide-react';
-import { useStore, showConfirmModal } from '../store/useStore';
+import { useStore, showConfirmModal, DEFAULT_SETTINGS } from '../store/useStore';
 import { Order, OrderType, OrderItem, MenuItem } from '../types';
 import { PROTECTION_PASSWORD } from '../constants';
 import { motion } from 'motion/react';
@@ -47,14 +47,22 @@ import { db } from '../lib/db';
 
 const ITEMS_PER_PAGE = 25;
 
+import { useLiveQuery } from 'dexie-react-hooks';
+
 export default function Records() {
+  const orders = useLiveQuery(() => db.orders.toArray()) || [];
+  const menuItems = useLiveQuery(() => db.menuItems.toArray()) || [];
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
+  const kotSnapshots = useLiveQuery(() => db.kotSnapshots.toArray()) || [];
+  const cashiers = useLiveQuery(() => db.cashiers.toArray()) || [];
+
   const { 
-    orders, settings, deleteOrder, updateOrder, restoreOrder,
-    cart, clearCart, menuItems, retrieveOrder: storeRetrieveOrder, 
+    deleteOrder, updateOrder, restoreOrder,
+    cart, clearCart, retrieveOrder: storeRetrieveOrder, 
     cancelHeldOrder: storeCancelHeldOrder, activeOrder, addOrder,
-    kotSnapshots, orderType, customerName, tableNumber,
-    deliveryChargeWaived, deliveryChargeWaivedReason, user,
-    cashiers = []
+    orderType, customerName, tableNumber,
+    deliveryChargeWaived, deliveryChargeWaivedReason, user
   } = useStore();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');

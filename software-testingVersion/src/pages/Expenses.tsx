@@ -20,7 +20,7 @@ import {
   Settings, 
   ArrowLeftRight 
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, DEFAULT_SETTINGS } from '../store/useStore';
 import { Expense, ExpenseCategory, RestaurantSettings } from '../types';
 import { format, startOfDay, endOfDay, subDays, startOfWeek, startOfMonth } from 'date-fns';
 import { toast } from 'sonner';
@@ -28,13 +28,18 @@ import { motion, AnimatePresence } from 'motion/react';
 import clsx from 'clsx';
 import { getBusinessDate, getBusinessDayStart, getBusinessDayEnd, getBusinessDateRange, getRecordsDateRange, convertCustomDateRange, getCachedCutoff } from '../utils/businessDayCalculation';
 
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../lib/db';
+
 type DateShortcut = 'Today' | 'Yesterday' | 'This Week' | 'This Month' | 'All' | 'Custom';
 
 export default function Expenses() {
+  const expenses = useLiveQuery(() => db.expenses.toArray()) || [];
+  const expenseCategories = useLiveQuery(() => db.expenseCategories.toArray()) || [];
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
+
   const { 
-    expenses, 
-    expenseCategories, 
-    settings,
     addExpense,
     updateExpense,
     deleteExpense,

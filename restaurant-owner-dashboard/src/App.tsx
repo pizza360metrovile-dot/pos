@@ -222,7 +222,7 @@ const Sidebar = ({
              )} />
              {isExpanded && (
                <span className={cn("text-[9px] font-black uppercase tracking-widest", !cloudSync ? "text-gray-400" : "text-text-sidebar")}>
-                 {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
+                 {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Online')))}
                </span>
              )}
              
@@ -350,7 +350,7 @@ const TopBar = ({
               "text-[10px] font-bold uppercase tracking-tight", 
               !cloudSync ? "text-gray-400" : (!isOnline ? "text-danger" : (isQuotaExceeded || isLicenseSyncFailed ? "text-amber-500" : "text-success"))
             )}>
-              {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Live Syncing')))}
+              {!cloudSync ? 'Sync Disabled' : (!isOnline ? 'Offline' : (isQuotaExceeded ? 'Quota Exceeded' : (isLicenseSyncFailed ? 'License Failed' : 'Offline')))}
             </span>
           </div>
         </div>
@@ -757,11 +757,7 @@ export default function App() {
         </main>
       </div>
       <Toaster position="top-right" theme="light" richColors />
-      {!isOnline && (
-        <div className="fixed top-4 right-4 bg-amber-500 border border-amber-600 text-white px-4 py-2.5 rounded-xl z-[10000] shadow-xl font-medium text-sm flex items-center gap-2 animate-bounce">
-          <span className="text-base">📡</span> Offline Mode — Changes will sync when online
-        </div>
-      )}
+
       {syncError && (
         <div className="fixed bottom-4 right-4 bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl shadow-lg max-w-sm z-[9999] flex flex-col gap-2">
           <div>

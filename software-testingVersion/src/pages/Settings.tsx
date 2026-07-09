@@ -27,8 +27,9 @@ import {
   Users,
   Trash2
 } from 'lucide-react';
-import { useStore, showConfirmModal } from '../store/useStore';
+import { useStore, showConfirmModal, DEFAULT_SETTINGS } from '../store/useStore';
 import { db } from '../lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -153,8 +154,11 @@ const InputField = ({ label, type = "text", value, onChange, placeholder, unit, 
 
 export default function Settings() {
   const navigate = useNavigate();
+  const settingsObj = useLiveQuery(() => db.settings.where({ key: 'main' }).first());
+  const settings = settingsObj?.value || DEFAULT_SETTINGS;
+  const cashiers = useLiveQuery(() => db.cashiers.toArray()) || [];
+
   const { 
-    settings, 
     updateSettings, 
     exportData, 
     importData, 
@@ -167,7 +171,6 @@ export default function Settings() {
     cloudSync,
     setCloudSync,
     deleteAllAppData,
-    cashiers = [],
     addCashier,
     toggleCashierActive,
     deleteCashier
