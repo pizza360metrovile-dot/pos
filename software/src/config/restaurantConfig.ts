@@ -6,7 +6,7 @@
  * Use this ID in your license generator tool
  */
 
-export const RESTAURANT_ID = 'REST-2026-001'
+export const RESTAURANT_ID = 'pizza-360-mtrvl'
 
 // Optional: Restaurant details (for reference)
 export const RESTAURANT_INFO = {

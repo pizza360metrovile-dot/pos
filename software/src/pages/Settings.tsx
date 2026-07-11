@@ -387,6 +387,239 @@ export default function Settings() {
   const [parsedBackup, setParsedBackup] = useState<any>(null);
   const [restoreStep, setRestoreStep] = useState<0 | 1 | 2>(0);
   const [restoreConfirmInput, setRestoreConfirmInput] = useState('');
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [clearLoading, setClearLoading] = useState(false);
+
+  const handleManualBackup = async () => {
+    try {
+      setBackupLoading(true);
+      
+      const allData = {
+        orders: await db.orders.toArray(),
+        orderItems: await db.orderItems.toArray(),
+        menuItems: await db.menuItems.toArray(),
+        categories: await db.categories.toArray(),
+        ingredients: await db.ingredients.toArray(),
+        expenses: await db.expenses.toArray(),
+        settings: await db.settings.toArray(),
+        appMeta: await db.appMeta.toArray(),
+        timestamp: new Date().toISOString(),
+        version: '1.0'
+      };
+      
+      const electron = (window as any).electron;
+      if (electron) {
+        // Open file dialog
+        const { filePath } = await electron.dialog.showSaveDialog({
+          defaultPath: `backup-${new Date().toISOString().split('T')[0]}.json`,
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+        
+        if (filePath) {
+          electron.fs.writeFileSync(filePath, JSON.stringify(allData, null, 2));
+          toast.success(`Backup saved to: ${filePath}`);
+        }
+      } else {
+        // Fallback for Web/Browser
+        const blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `backup-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Backup downloaded successfully.');
+      }
+    } catch (err: any) {
+      toast.error('Backup failed: ' + err.message);
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    try {
+      const electron = (window as any).electron;
+      let backupData: any = null;
+      let sourceName = '';
+
+      if (electron) {
+        // Open file dialog
+        const { filePaths } = await electron.dialog.showOpenDialog({
+          properties: ['openFile'],
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+        
+        if (!filePaths || filePaths.length === 0) {
+          return;  // User cancelled
+        }
+        
+        const filePath = filePaths[0];
+        const fileContent = electron.fs.readFileSync(filePath, 'utf-8');
+        backupData = JSON.parse(fileContent);
+        sourceName = filePath;
+      } else {
+        // Web / Browser mode
+        // We can use a file input element dynamically created
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = async (e: any) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = async (evt: any) => {
+            try {
+              const data = JSON.parse(evt.target.result as string);
+              await processRestore(data, file.name);
+            } catch (err: any) {
+              toast.error('Invalid JSON file: ' + err.message);
+            }
+          };
+          reader.readAsText(file);
+        };
+        input.click();
+        return;
+      }
+
+      if (backupData) {
+        await processRestore(backupData, sourceName);
+      }
+    } catch (err: any) {
+      toast.error('Restore failed: ' + err.message);
+    }
+  };
+
+  const processRestore = async (backupData: any, sourceName: string) => {
+    try {
+      const electron = (window as any).electron;
+      let confirmed = false;
+      
+      const timestamp = backupData.timestamp || backupData.exportedAt;
+      const dateStr = timestamp ? new Date(timestamp).toLocaleString() : 'Unknown';
+
+      if (electron) {
+        const res = await electron.dialog.showMessageBox({
+          type: 'warning',
+          title: 'Restore Backup',
+          message: `Restore backup from ${dateStr}?\nCurrent data will be overwritten.`,
+          buttons: ['Cancel', 'Restore'],
+          defaultId: 0
+        });
+        confirmed = res.response === 1;
+      } else {
+        confirmed = window.confirm(`Restore backup from ${dateStr}?\nCurrent data will be overwritten.`);
+      }
+      
+      if (!confirmed) {
+        return;
+      }
+
+      setRestoreLoading(true);
+
+      // Standardize data structure for importData
+      let processedBackup = backupData;
+      if (!backupData.data) {
+        processedBackup = {
+          exportedAt: timestamp ? new Date(timestamp).getTime() : Date.now(),
+          version: backupData.version || 1,
+          data: {
+            settings: backupData.settings || [],
+            categories: backupData.categories || [],
+            menuItems: backupData.menuItems || [],
+            orderItems: backupData.orderItems || [],
+            orders: backupData.orders || [],
+            ingredients: backupData.ingredients || [],
+            recipes: backupData.recipes || [],
+            expenses: backupData.expenses || [],
+            appMeta: backupData.appMeta || []
+          }
+        };
+      }
+
+      // Restoring via useStore's importData
+      const importDataFn = useStore.getState().importData;
+      await importDataFn(processedBackup);
+
+      toast.success('Backup restored successfully. App will restart...');
+
+      setTimeout(() => {
+        if (electron) {
+          electron.ipcRenderer.send('restart-app');
+        } else {
+          window.location.reload();
+        }
+      }, 2000);
+
+    } catch (err: any) {
+      toast.error('Restore failed: ' + err.message);
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleClearAllData = async () => {
+    const electron = (window as any).electron;
+    let confirmed = false;
+
+    if (electron) {
+      const res = await electron.dialog.showMessageBox({
+        type: 'warning',
+        title: 'Clear All Data',
+        message: 'This will DELETE all data. Cannot undo.',
+        buttons: ['Cancel', 'Clear All Data'],
+        defaultId: 0
+      });
+      confirmed = res.response === 1;
+    } else {
+      confirmed = window.confirm('This will DELETE all data. Cannot undo. Are you sure you want to proceed?');
+    }
+    
+    if (!confirmed) {
+      return;  // User clicked Cancel
+    }
+    
+    try {
+      setClearLoading(true);
+      
+      // Clear all tables
+      const tables = [
+        'orders', 'orderItems', 'menuItems', 'categories',
+        'ingredients', 'recipes', 'settings', 'stockLog',
+        'expenses', 'dealItems', 'modifierGroups', 'appMeta'
+      ];
+      
+      for (const table of tables) {
+        if ((db as any)[table]) {
+          await (db as any)[table].clear();
+        }
+      }
+      
+      // Close database
+      await db.close();
+      
+      // Delete database completely
+      await indexedDB.deleteDatabase('rms_db');
+      await indexedDB.deleteDatabase('pos-app');
+      
+      toast.success('All data cleared. App will restart...');
+      
+      // Restart app after 2 seconds
+      setTimeout(() => {
+        if (electron) {
+          electron.ipcRenderer.send('restart-app');
+        } else {
+          window.location.reload();
+        }
+      }, 2000);
+      
+    } catch (err: any) {
+      toast.error('Clear failed: ' + err.message);
+    } finally {
+      setClearLoading(false);
+    }
+  };
 
   // Menu Seed Import state
   const [showMenuImportModal, setShowMenuImportModal] = useState(false);
@@ -1744,6 +1977,52 @@ export default function Settings() {
               >
                 Import Menu from menuSeed.json
               </button>
+            </div>
+          </div>
+
+          {/* Data Management Section */}
+          <div className="mt-10 pt-10 border-t border-border-light space-y-4 text-left">
+            <h3 className="font-bold text-text-primary text-[16px] uppercase tracking-wider">Data Management</h3>
+            
+            <div className="bg-bg-surface-2 border border-border-light rounded-xl p-6 space-y-4 max-w-xl">
+              <div>
+                <p className="text-xs text-text-muted mb-2 uppercase tracking-wide font-medium">
+                  Auto-backup saves every hour to device
+                </p>
+                <button 
+                  onClick={handleManualBackup}
+                  disabled={backupLoading}
+                  className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
+                >
+                  {backupLoading ? 'Backing up...' : '💾 Backup Now'}
+                </button>
+              </div>
+              
+              <div className="border-t border-border-light pt-3">
+                <p className="text-xs text-text-muted mb-2 uppercase tracking-wide font-medium">
+                  Restore data from a backup file
+                </p>
+                <button 
+                  onClick={handleRestoreBackup}
+                  disabled={restoreLoading}
+                  className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
+                >
+                  {restoreLoading ? 'Restoring...' : '📂 Restore Backup'}
+                </button>
+              </div>
+              
+              <div className="border-t border-border-light pt-4">
+                <p className="text-xs text-red-500 mb-2 font-bold uppercase tracking-wide">
+                  ⚠️ Danger Zone - Cannot undo
+                </p>
+                <button 
+                  onClick={handleClearAllData}
+                  disabled={clearLoading}
+                  className="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
+                >
+                  {clearLoading ? 'Clearing...' : '🗑️ Clear All Data'}
+                </button>
+              </div>
             </div>
           </div>
 

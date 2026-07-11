@@ -45,7 +45,14 @@ export async function safeEnableNetwork() {
     await enableNetwork(fireStore);
     console.log('Firestore network connection enabled successfully.');
   } catch (err: any) {
-    console.warn('Failed to enable Firestore network safely:', err.message || err);
+    console.warn("Forcing network reset due to stream lock:", err);
+    try {
+      await disableNetwork(fireStore);
+      await enableNetwork(fireStore);
+      console.log('Firestore network connection force-reset and enabled successfully.');
+    } catch (resetErr: any) {
+      console.error('Critical failure during network reset retry:', resetErr);
+    }
   }
 }
 
@@ -76,17 +83,6 @@ if (isValidConfig) {
     });
 
     console.log('Firestore initialized with modern persistentLocalCache & persistentMultipleTabManager.');
-
-    // Handle online/offline events at firebase client level to trigger network connection states
-    if (typeof window !== 'undefined') {
-      window.addEventListener('online', async () => {
-        await safeEnableNetwork();
-      });
-
-      window.addEventListener('offline', async () => {
-        await safeDisableNetwork();
-      });
-    }
 
   } catch (err) {
     console.error('Failed to initialize Firebase services:', err);

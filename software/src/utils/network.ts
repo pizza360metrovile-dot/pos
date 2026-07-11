@@ -37,7 +37,11 @@ export async function checkActualConnection(): Promise<boolean> {
       clearTimeout(timeoutId);
       return true;
     } catch (innerErr) {
-      return false; // Genuinely offline
+      // If a ping fails via a thrown exception (like a CSP Refused to connect block),
+      // catch the exception, default to navigator.onLine to determine current availability,
+      // and avoid forcing the database offline artificially.
+      console.warn('Network connection ping failed. Defaulting to navigator.onLine:', navigator.onLine, innerErr);
+      return navigator.onLine;
     }
   }
 }

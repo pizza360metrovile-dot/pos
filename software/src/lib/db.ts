@@ -248,6 +248,100 @@ export class RMSDatabase extends Dexie {
         }
       }
     });
+
+    this.version(25).stores({
+      settings: '++id, key, isSynced, updatedAt',
+      categories: '++id, name, isSynced, updatedAt',
+      menuItems: '++id, categoryId, name, isActive, isSynced, updatedAt',
+      orders: '++id, createdAt, status, type, isSynced, updatedAt',
+      orderItems: '++id, orderId, menuItemId, isSynced, updatedAt',
+      ingredients: '++id, name, unit, isSynced, updatedAt',
+      recipes: '++id, menuItemId, isSynced, updatedAt',
+      recipeItems: '++id, recipeId, ingredientId, isSynced, updatedAt',
+      stockLog: '++id, ingredientId, createdAt, reason, isSynced, updatedAt',
+      kotSnapshots: '++id, orderId, kotNumber, isSynced, updatedAt',
+      modifierGroups: '++id, menuItemId, name, type, isSynced, updatedAt',
+      modifierOptions: '++id, groupId, label, additionalPrice, isSynced, updatedAt',
+      orderItemModifiers: '++id, orderItemId, modifierGroupId, orderId, isSynced, updatedAt',
+      dealItems: '++id, dealMenuItemId, componentMenuItemId, isSynced, updatedAt',
+      dealOrderComponents: '++id, orderItemId, componentMenuItemId, isSynced, updatedAt',
+      expenses: '++id, title, categoryId, date, createdAt, isSynced, updatedAt',
+      expenseCategories: '++id, name, isSynced, updatedAt',
+      cashiers: '++id, name, isActive, isSynced, updatedAt',
+      users: 'id, email',
+      used_keys: 'signature, timestamp',
+      sync_queue: '++id, signature, timestamp, synced',
+      appMeta: 'key'
+    }).upgrade(async tx => {
+      const now = Date.now();
+      const tablesToMigrate = [
+        'settings', 'categories', 'menuItems', 'orders', 'orderItems',
+        'ingredients', 'recipes', 'recipeItems', 'stockLog', 'kotSnapshots',
+        'modifierGroups', 'modifierOptions', 'orderItemModifiers', 'dealItems',
+        'dealOrderComponents', 'expenses', 'expenseCategories', 'cashiers'
+      ];
+      for (const table of tablesToMigrate) {
+        try {
+          await tx.table(table).toCollection().modify(item => {
+            if (item.isSynced === 1 || item.isSynced === true) {
+              item.isSynced = true;
+            } else {
+              item.isSynced = false;
+            }
+            if (item.updatedAt === undefined) {
+              item.updatedAt = item.createdAt || item.date || item.sentAt || now;
+            }
+          });
+        } catch (e) {
+          console.warn(`Failed upgrading table ${table} for version 25:`, e);
+        }
+      }
+    });
+
+    this.version(26).stores({
+      settings: '++id, key, isSynced, updatedAt',
+      categories: '++id, name, isSynced, updatedAt',
+      menuItems: '++id, categoryId, name, isActive, isSynced, updatedAt',
+      orders: '++id, createdAt, status, type, isSynced, updatedAt',
+      orderItems: '++id, orderId, menuItemId, isSynced, updatedAt',
+      ingredients: '++id, name, unit, isSynced, updatedAt',
+      recipes: '++id, menuItemId, isSynced, updatedAt',
+      recipeItems: '++id, recipeId, ingredientId, isSynced, updatedAt',
+      stockLog: '++id, ingredientId, createdAt, reason, isSynced, updatedAt',
+      kotSnapshots: '++id, orderId, kotNumber, isSynced, updatedAt',
+      modifierGroups: '++id, menuItemId, name, type, isSynced, updatedAt',
+      modifierOptions: '++id, groupId, label, additionalPrice, isSynced, updatedAt',
+      orderItemModifiers: '++id, orderItemId, modifierGroupId, orderId, isSynced, updatedAt',
+      dealItems: '++id, dealMenuItemId, componentMenuItemId, isSynced, updatedAt',
+      dealOrderComponents: '++id, orderItemId, componentMenuItemId, isSynced, updatedAt',
+      expenses: '++id, title, categoryId, date, createdAt, isSynced, updatedAt',
+      expenseCategories: '++id, name, isSynced, updatedAt',
+      cashiers: '++id, name, isActive, isSynced, updatedAt',
+      users: 'id, email',
+      used_keys: 'signature, timestamp',
+      sync_queue: '++id, signature, timestamp, synced',
+      appMeta: 'key'
+    }).upgrade(async tx => {
+      const tablesToMigrate = [
+        'settings', 'categories', 'menuItems', 'orders', 'orderItems',
+        'ingredients', 'recipes', 'recipeItems', 'stockLog', 'kotSnapshots',
+        'modifierGroups', 'modifierOptions', 'orderItemModifiers', 'dealItems',
+        'dealOrderComponents', 'expenses', 'expenseCategories', 'cashiers'
+      ];
+      for (const table of tablesToMigrate) {
+        try {
+          await tx.table(table).toCollection().modify(item => {
+            if (item.isSynced === 1 || item.isSynced === true) {
+              item.isSynced = 1;
+            } else {
+              item.isSynced = 0;
+            }
+          });
+        } catch (e) {
+          console.warn(`Failed upgrading table ${table} for version 26:`, e);
+        }
+      }
+    });
   }
 }
 

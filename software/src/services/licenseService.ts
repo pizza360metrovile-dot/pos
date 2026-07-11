@@ -5,7 +5,7 @@
 
 import { db } from '../lib/db';
 import { fireStore } from '../lib/firebase';
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDocFromServer, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { LicenseData } from '../utils/licenseValidator';
 import { RESTAURANT_ID } from '../config/restaurantConfig';
 
@@ -283,36 +283,51 @@ export async function generateTestingKey(restaurantId: string, timestamp: number
 
 const uid = 'operator-1'; // Or get from auth
 
+let activeFetchPromise: Promise<LicenseData | null> | null = null;
+
 /**
  * Fetch license data from Firebase with a robust timeout fallback
  */
 export async function fetchLicenseFromFirebase(): Promise<LicenseData | null> {
-  try {
-    if (!fireStore) {
-      console.warn('Firestore is not initialized. Cannot fetch license.');
+  if (activeFetchPromise) {
+    console.log('fetchLicenseFromFirebase: Using active concurrent promise to avoid collision');
+    return activeFetchPromise;
+  }
+
+  activeFetchPromise = (async () => {
+    try {
+      if (!fireStore) {
+        console.warn('Firestore is not initialized. Cannot fetch license.');
+        return null;
+      }
+      const restaurantDoc = doc(fireStore, 'restaurants', uid);
+      
+      // Use a robust 10-second timeout for fetching license from Firebase
+      const getDocPromise = getDocFromServer(restaurantDoc);
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Firebase connection handshake timeout')), 10000)
+      );
+      const docSnap = await Promise.race([getDocPromise, timeoutPromise]);
+      
+      if (docSnap.exists() && docSnap.data().license) {
+        return docSnap.data().license as LicenseData;
+      }
+      
+      return null;
+    } catch (error: any) {
+      if (error?.message?.includes('offline') || error?.code === 'unavailable' || error?.message?.includes('timeout')) {
+        console.warn('Failed to fetch license from Firebase because client is offline or handshake timed out. Will attempt local fallback.');
+      } else {
+        console.error('Failed to fetch license from Firebase:', error);
+      }
       return null;
     }
-    const restaurantDoc = doc(fireStore, 'restaurants', uid);
-    
-    // Use a robust 6-second timeout for fetching license from Firebase
-    const getDocPromise = getDoc(restaurantDoc);
-    const timeoutPromise = new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error('Firebase connection handshake timeout')), 6000)
-    );
-    const docSnap = await Promise.race([getDocPromise, timeoutPromise]);
-    
-    if (docSnap.exists() && docSnap.data().license) {
-      return docSnap.data().license as LicenseData;
-    }
-    
-    return null;
-  } catch (error: any) {
-    if (error?.message?.includes('offline') || error?.code === 'unavailable' || error?.message?.includes('timeout')) {
-      console.warn('Failed to fetch license from Firebase because client is offline or handshake timed out. Will attempt local fallback.');
-    } else {
-      console.error('Failed to fetch license from Firebase:', error);
-    }
-    return null;
+  })();
+
+  try {
+    return await activeFetchPromise;
+  } finally {
+    activeFetchPromise = null;
   }
 }
 
@@ -341,7 +356,7 @@ export async function saveLicenseToFirebase(
     }
     const restaurantDoc = doc(fireStore, 'restaurants', uid);
     
-    const docSnap = await getDoc(restaurantDoc);
+    const docSnap = await getDocFromServer(restaurantDoc);
     if (!docSnap.exists()) {
       await setDoc(restaurantDoc, {
         license: license,

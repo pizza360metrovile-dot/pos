@@ -402,6 +402,8 @@ export default function App() {
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
+  const hasInitialized = useRef(false);
+
   useEffect(() => {
     const updateOnline = () => {
       checkActualConnection().then(online => {
@@ -422,6 +424,112 @@ export default function App() {
       window.removeEventListener('online', updateOnline);
       window.removeEventListener('offline', updateOnline);
       clearInterval(interval);
+    };
+  }, []);
+
+  // Auto-backup hourly to disk (Electron-only)
+  useEffect(() => {
+    const electron = (window as any).electron;
+    if (!electron) return;
+
+    const backupInterval = setInterval(async () => {
+      try {
+        const exportDataFn = useStore.getState().exportData;
+        const jsonContent = await exportDataFn();
+        
+        const backupDir = electron.path.join(
+          electron.app.getPath('userData'),
+          'backups'
+        );
+        
+        // Ensure backups directory exists
+        if (!electron.fs.existsSync(backupDir)) {
+          electron.fs.mkdirSync(backupDir, { recursive: true });
+        }
+        
+        const backupPath = electron.path.join(
+          backupDir,
+          `backup-${Date.now()}.json`
+        );
+        
+        electron.fs.writeFileSync(backupPath, jsonContent);
+        console.log('✅ Auto-backup saved:', backupPath);
+        
+        // Keep only LAST 30 backups. Delete older ones automatically.
+        try {
+          const files = electron.fs.readdirSync(backupDir);
+          const backupFiles = files
+            .filter((f: string) => f.startsWith('backup-') && f.endsWith('.json'))
+            .map((f: string) => ({
+              name: f,
+              path: electron.path.join(backupDir, f),
+              time: electron.fs.statSync(electron.path.join(backupDir, f)).mtimeMs || 0
+            }))
+            .sort((a: any, b: any) => b.time - a.time); // newest first
+            
+          if (backupFiles.length > 30) {
+            const filesToDelete = backupFiles.slice(30);
+            for (const file of filesToDelete) {
+              electron.fs.unlinkSync(file.path);
+              console.log('🗑️ Deleted old backup:', file.name);
+            }
+          }
+        } catch (cleanErr) {
+          console.error('Failed to clean old backups:', cleanErr);
+        }
+      } catch (err) {
+        console.error('Backup failed:', err);
+      }
+    }, 3600000); // Every 1 hour
+    
+    // Initial backup 10 seconds after startup to verify functionality
+    const startupTimeout = setTimeout(async () => {
+      try {
+        const exportDataFn = useStore.getState().exportData;
+        const jsonContent = await exportDataFn();
+        
+        const backupDir = electron.path.join(
+          electron.app.getPath('userData'),
+          'backups'
+        );
+        
+        if (!electron.fs.existsSync(backupDir)) {
+          electron.fs.mkdirSync(backupDir, { recursive: true });
+        }
+        
+        const backupPath = electron.path.join(
+          backupDir,
+          `backup-${Date.now()}.json`
+        );
+        
+        electron.fs.writeFileSync(backupPath, jsonContent);
+        console.log('✅ Initial auto-backup saved:', backupPath);
+        
+        // Cleanup older ones
+        const files = electron.fs.readdirSync(backupDir);
+        const backupFiles = files
+          .filter((f: string) => f.startsWith('backup-') && f.endsWith('.json'))
+          .map((f: string) => ({
+            name: f,
+            path: electron.path.join(backupDir, f),
+            time: electron.fs.statSync(electron.path.join(backupDir, f)).mtimeMs || 0
+          }))
+          .sort((a: any, b: any) => b.time - a.time);
+          
+        if (backupFiles.length > 30) {
+          const filesToDelete = backupFiles.slice(30);
+          for (const file of filesToDelete) {
+            electron.fs.unlinkSync(file.path);
+          }
+        }
+      } catch (err) {
+        console.error('Initial auto-backup failed:', err);
+      }
+    }, 10000);
+
+    return () => {
+      clearInterval(backupInterval);
+      clearTimeout(startupTimeout);
     };
   }, []);
 
@@ -467,6 +575,9 @@ export default function App() {
   }, [settings?.licenseExpiry, isLicenseValid, licenseData]);
 
   useEffect(() => {
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+
     const validateLicense = async () => {
       // 1. Check local storage first as a graceful offline fallback
       const localKey = localStorage.getItem('license_key');

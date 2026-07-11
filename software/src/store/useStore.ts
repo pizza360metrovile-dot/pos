@@ -21,7 +21,8 @@ import {
   getDocs, 
   writeBatch,
   Timestamp,
-  getDoc
+  getDoc,
+  onSnapshot
 } from 'firebase/firestore';
 
 interface AppUser {
@@ -207,6 +208,8 @@ export interface PromptModalState {
 
 
 let activeSyncUnsubscribers: (() => void)[] = [];
+let unsubscribeKillSwitch: (() => void) | null = null;
+let unsubscribeRestaurantKillSwitch: (() => void) | null = null;
 let licenseExpiryCheckInterval: any = null;
 
 const parseId = (idStr: string): number | string => {
@@ -764,8 +767,27 @@ export const useStore = create<StoreState>((set, get) => ({
   init: async () => {
     set({ isLoading: true });
 
-    // Read sync setting
-    const syncObj = await db.appMeta.get('_sync');
+    // Safely open the Dexie database and handle any version conflicts gracefully
+    try {
+      if (!db.isOpen()) {
+        await db.open();
+      }
+    } catch (openErr: any) {
+      console.error('Failed to open Dexie database on startup:', openErr);
+      if (openErr.name === 'VersionError') {
+        console.warn('Dexie version conflict detected. Resetting database to match local schemas...');
+        try {
+          await db.delete();
+          await db.open();
+        } catch (resetErr) {
+          console.error('Critical failure resetting database:', resetErr);
+        }
+      }
+    }
+
+    try {
+      // Read sync setting
+      const syncObj = await db.appMeta.get('_sync');
     const isSyncEnabled = syncObj ? syncObj.value !== false : true;
     set({ cloudSync: isSyncEnabled });
     if (!isSyncEnabled && fireStore) {
@@ -803,22 +825,27 @@ export const useStore = create<StoreState>((set, get) => ({
     const updateOnlineStatus = () => {
       checkActualConnection().then((online) => {
         if (get().cloudSync) {
+          const wasOnline = get().isOnline;
           if (online) {
             set({ isOnline: true });
-            if (fireStore) {
-              safeEnableNetwork()
-                .then(() => {
-                  console.log('Firestore network connection enabled successfully via periodic check.');
-                  return triggerBackgroundSync();
-                })
-                .catch(err => console.warn('Failed to enable Firestore network or sync on network restore:', err));
-            } else {
-              triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+            if (!wasOnline) {
+              if (fireStore) {
+                safeEnableNetwork()
+                  .then(() => {
+                    console.log('Firestore network connection enabled successfully via periodic check.');
+                    return triggerBackgroundSync();
+                  })
+                  .catch(err => console.warn('Failed to enable Firestore network or sync on network restore:', err));
+              } else {
+                triggerBackgroundSync().catch(err => console.warn('Background sync on network restore failed:', err));
+              }
             }
           } else {
             set({ isOnline: false });
-            if (fireStore) {
-              safeDisableNetwork().catch(err => console.warn('Failed to disable Firestore network on offline status check:', err));
+            if (wasOnline) {
+              if (fireStore) {
+                safeDisableNetwork().catch(err => console.warn('Failed to disable Firestore network on offline status check:', err));
+              }
             }
           }
         }
@@ -1378,6 +1405,32 @@ export const useStore = create<StoreState>((set, get) => ({
       subscription,
       isLoading: false 
     });
+
+    const categoriesCount = await db.categories.count();
+    const menuItemsCount = await db.menuItems.count();
+    const ordersCount = await db.orders.count();
+    const ingredientsCount = await db.ingredients.count();
+    const expensesCount = await db.expenses.count();
+
+    const hasNoLocalDataBoot = (
+      categoriesCount === 0 &&
+      menuItemsCount === 0 &&
+      ordersCount === 0 &&
+      ingredientsCount === 0 &&
+      expensesCount === 0
+    );
+
+    if (hasNoLocalDataBoot && get().user) {
+      console.log('Local collections are empty after boot up. Triggering a one-time background sync catch-up...');
+      import('../services/backgroundSyncWorker').then(({ performSync }) => {
+        performSync().catch(err => console.warn('Catch-up background sync failed:', err));
+      });
+    }
+
+    } catch (initErr) {
+      console.error('Unhandled Dexie or state initialization error inside init():', initErr);
+      set({ isLoading: false });
+    }
   },
 
   setSidebarState: async (sidebarState) => {
@@ -1396,7 +1449,7 @@ export const useStore = create<StoreState>((set, get) => ({
       return;
     }
 
-    const { doc, getDoc, getDocs, collection } = await import('firebase/firestore');
+    const { doc, getDoc, getDocs, collection, query, where } = await import('firebase/firestore');
 
     const parseId = (idStr: string): number | string => {
       const num = Number(idStr);
@@ -1427,63 +1480,85 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ syncError: null, isOnline: true });
 
       if (settingsSnap.exists()) {
-        const storedSyncTS = localStorage.getItem('lastSyncTimestamp');
-        const lastSyncTimestamp = storedSyncTS ? parseInt(storedSyncTS, 10) : 0;
-        const ordersCount = await db.orders.count();
+        console.log('Restaurant settings exist on Firestore. Starting startup delta-sync...');
 
-        if (lastSyncTimestamp > 0 || ordersCount > 0) {
-          console.log('Local DB has sync history or data. Skipping full collections restoration during setupSync (offline-first).');
-          // Just update settings to match what's on Firestore, but don't clear or download other tables
-          const remoteSettings = settingsSnap.data() as RestaurantSettings;
-          await db.settings.put({ key: 'main', value: remoteSettings });
-        } else {
-          console.log('Restaurants settings exist on Firestore, no local data, and no sync history. Restoring collections to local Dexie (first device migration)...');
-          
-          // 1. Settings restoration
-          const remoteSettings = settingsSnap.data() as RestaurantSettings;
-          await db.settings.put({ key: 'main', value: remoteSettings });
+        // 1. Always restore/update settings
+        const remoteSettings = settingsSnap.data() as RestaurantSettings;
+        await db.settings.put({ key: 'main', value: remoteSettings });
 
-          // 2. Clear out other tables and restore all from Firestore
-          const collectionsToPull = [
-            { name: 'categories', table: db.categories },
-            { name: 'menuItems', table: db.menuItems },
-            { name: 'orders', table: db.orders },
-            { name: 'orderItems', table: db.orderItems },
-            { name: 'ingredients', table: db.ingredients },
-            { name: 'recipes', table: db.recipes },
-            { name: 'recipeItems', table: db.recipeItems },
-            { name: 'stockLog', table: db.stockLog },
-            { name: 'modifierGroups', table: db.modifierGroups },
-            { name: 'modifierOptions', table: db.modifierOptions },
-            { name: 'orderItemModifiers', table: db.orderItemModifiers },
-            { name: 'dealItems', table: db.dealItems },
-            { name: 'dealOrderComponents', table: db.dealOrderComponents },
-            { name: 'expenses', table: db.expenses },
-            { name: 'expenseCategories', table: db.expenseCategories },
-            { name: 'cashiers', table: db.cashiers }
-          ];
+        // 2. Perform delta-sync pull for all individual collections
+        const collectionsToPull = [
+          { name: 'categories', table: db.categories },
+          { name: 'menuItems', table: db.menuItems },
+          { name: 'orders', table: db.orders },
+          { name: 'orderItems', table: db.orderItems },
+          { name: 'ingredients', table: db.ingredients },
+          { name: 'recipes', table: db.recipes },
+          { name: 'recipeItems', table: db.recipeItems },
+          { name: 'stockLog', table: db.stockLog },
+          { name: 'modifierGroups', table: db.modifierGroups },
+          { name: 'modifierOptions', table: db.modifierOptions },
+          { name: 'orderItemModifiers', table: db.orderItemModifiers },
+          { name: 'dealItems', table: db.dealItems },
+          { name: 'dealOrderComponents', table: db.dealOrderComponents },
+          { name: 'expenses', table: db.expenses },
+          { name: 'expenseCategories', table: db.expenseCategories },
+          { name: 'cashiers', table: db.cashiers }
+        ];
 
-          for (const col of collectionsToPull) {
-            const querySnap = await getDocs(collection(fireStore, `restaurants/${uid}/${col.name}`));
-            // Run in write transaction marked fromFirestore to prevent hook infinite loop syncing
-            await db.transaction('rw', [col.table], async (tx: any) => {
-              tx.fromFirestore = true;
-              // Clear current table contents first before restoring
-              await col.table.clear();
+        for (const col of collectionsToPull) {
+          try {
+            // Find the newest updatedAt timestamp locally in this table
+            let localNewestTimestamp = 0;
+            const newestRecord = await (col.table as any).orderBy('updatedAt').last() as any;
+            if (newestRecord && typeof newestRecord.updatedAt === 'number') {
+              localNewestTimestamp = newestRecord.updatedAt;
+            }
+
+            // Query Firestore using timestamp filter. If 0 (empty local table), fetch all.
+            let q;
+            if (localNewestTimestamp > 0) {
+              console.log(`🔍 Table ${col.name} newest local updatedAt is ${localNewestTimestamp}. Querying server delta...`);
+              q = query(
+                collection(fireStore, `restaurants/${uid}/${col.name}`),
+                where('updatedAt', '>', localNewestTimestamp)
+              );
+            } else {
+              console.log(`🔍 Table ${col.name} has no local data. Fetching entire collection...`);
+              q = collection(fireStore, `restaurants/${uid}/${col.name}`);
+            }
+
+            const querySnap = await getDocs(q);
+
+            if (!querySnap.empty) {
+              console.log(`📥 Startup Delta pull: Found ${querySnap.size} remote updates for ${col.name}`);
+              const itemsToPut: any[] = [];
               for (const docObj of querySnap.docs) {
-                const data = docObj.data();
+                const data = docObj.data() as any;
                 const docId = parseId(docObj.id);
-                await col.table.put({
+                itemsToPut.push({
                   ...data,
-                  id: docId
-                } as any);
+                  id: docId,
+                  isSynced: 1 // Mark as synced locally
+                });
               }
-            });
-          }
 
-          // Persist the lastSyncTimestamp to localStorage after a successful full first-device migration
-          localStorage.setItem('lastSyncTimestamp', String(Date.now()));
+              // Upsert retrieved delta data using bulkPut within fromFirestore transaction
+              await db.transaction('rw', [col.table], async (tx: any) => {
+                tx.fromFirestore = true;
+                await (col.table as any).bulkPut(itemsToPut);
+              });
+              console.log(`💾 Successfully merged ${itemsToPut.length} items into local ${col.name}`);
+            } else {
+              console.log(`✅ Table ${col.name} is already up-to-date.`);
+            }
+          } catch (colErr) {
+            console.error(`Failed startup delta sync for ${col.name}:`, colErr);
+          }
         }
+
+        // Persist the lastSyncTimestamp to localStorage after startup delta sync
+        localStorage.setItem('lastSyncTimestamp', String(Date.now()));
 
         // Hydrate Zustand store slices
         const categories = await db.categories.toArray();
@@ -1781,7 +1856,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   logout: async () => {
-    // No listeners to stop since we use pure one-time fetches
+    get().stopKillSwitchListeners();
     localStorage.removeItem('rms_session');
     set({
       user: null,
@@ -2997,14 +3072,23 @@ export const useStore = create<StoreState>((set, get) => ({
   startKillSwitchListeners: async () => {
     if (!fireStore || !get().cloudSync) return;
 
+    // Clean up any previous listener subscriptions first
+    if (unsubscribeKillSwitch) {
+      try { unsubscribeKillSwitch(); } catch (e) {}
+      unsubscribeKillSwitch = null;
+    }
+    if (unsubscribeRestaurantKillSwitch) {
+      try { unsubscribeRestaurantKillSwitch(); } catch (e) {}
+      unsubscribeRestaurantKillSwitch = null;
+    }
+
     try {
       const rid = await getRestaurantId();
       const globalDocRef = doc(fireStore, 'appControl', 'global');
       const restDocRef = doc(fireStore, 'appControl', rid);
 
-      // One-time check for global app control settings
-      try {
-        const globalSnap = await getDoc(globalDocRef);
+      // Real-time listener for global app control settings
+      unsubscribeKillSwitch = onSnapshot(globalDocRef, async (globalSnap) => {
         if (globalSnap.exists()) {
           const data = globalSnap.data();
           const currentGlobalShutdown = get().globalShutdown;
@@ -3031,12 +3115,10 @@ export const useStore = create<StoreState>((set, get) => ({
               // Show toast on transition from true to false
               if (currentGlobalShutdown === true) {
                 toast.success("Service restored");
-                // Redirect to login automatically
                 get().logout();
               }
             }
           } else if (remoteShutdown && remoteShutdownMsg !== get().globalShutdownMessage) {
-            // Message updated
             if (remoteShutdownMsg) {
               await db.appMeta.put({ key: '_sd_msg', value: remoteShutdownMsg });
             }
@@ -3069,18 +3151,17 @@ export const useStore = create<StoreState>((set, get) => ({
             set({ maintenanceMessage: remoteMaintenanceMsg });
           }
         }
-      } catch (err: any) {
+      }, (err) => {
         const errMsg = err?.message || String(err);
         if (errMsg.toLowerCase().includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
-          console.warn("Global kill switch check: client is offline.");
+          console.warn("Global kill switch listener: client is offline.");
         } else {
-          console.error("Global kill switch check failed:", err);
+          console.error("Global kill switch listener failed:", err);
         }
-      }
+      });
 
-      // One-time check for restaurant specific control settings
-      try {
-        const restSnap = await getDoc(restDocRef);
+      // Real-time listener for restaurant specific control settings
+      unsubscribeRestaurantKillSwitch = onSnapshot(restDocRef, async (restSnap) => {
         if (restSnap.exists()) {
           const data = restSnap.data();
           const currentRestShutdown = get().restaurantShutdown;
@@ -3113,21 +3194,29 @@ export const useStore = create<StoreState>((set, get) => ({
             set({ restaurantShutdownMessage: remoteRShutdownMsg });
           }
         }
-      } catch (err: any) {
+      }, (err) => {
         const errMsg = err?.message || String(err);
         if (errMsg.toLowerCase().includes('offline') || err?.code === 'unavailable' || !navigator.onLine) {
-          console.warn("Restaurant kill switch check: client is offline.");
+          console.warn("Restaurant kill switch listener: client is offline.");
         } else {
-          console.error("Restaurant kill switch check failed:", err);
+          console.error("Restaurant kill switch listener failed:", err);
         }
-      }
+      });
+
     } catch (e) {
-      console.error("Failed to check kill switch configuration:", e);
+      console.error("Failed to setup real-time kill switch listeners:", e);
     }
   },
 
   stopKillSwitchListeners: () => {
-    // Left as empty stub for compatibility with component calls
+    if (unsubscribeKillSwitch) {
+      try { unsubscribeKillSwitch(); } catch (e) {}
+      unsubscribeKillSwitch = null;
+    }
+    if (unsubscribeRestaurantKillSwitch) {
+      try { unsubscribeRestaurantKillSwitch(); } catch (e) {}
+      unsubscribeRestaurantKillSwitch = null;
+    }
   },
 
   fetchLatestKillSwitchState: async () => {
