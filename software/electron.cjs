@@ -6,6 +6,12 @@
 const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+
+// Configure the update logger for debugging
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
 
 // Create backups directory if not exists
 app.whenReady().then(() => {
@@ -160,6 +166,9 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  // Check for updates automatically as soon as the app starts
+  autoUpdater.checkForUpdatesAndNotify();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -171,4 +180,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Force installation immediately once the file is fully downloaded in the background
+autoUpdater.on('update-downloaded', () => {
+  autoUpdater.quitAndInstall();
 });
