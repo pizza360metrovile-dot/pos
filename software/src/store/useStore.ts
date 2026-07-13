@@ -786,18 +786,26 @@ export const useStore = create<StoreState>((set, get) => ({
     }
 
     try {
-      // Read sync setting
-      const syncObj = await db.appMeta.get('_sync');
-    const isSyncEnabled = syncObj ? syncObj.value !== false : true;
-    set({ cloudSync: isSyncEnabled });
-    if (!isSyncEnabled && fireStore) {
-      try {
-        await safeDisableNetwork();
-        set({ isOnline: false });
-      } catch (err) {
-        console.warn('Failed to disable firestore network on init:', err);
+      // Read sync setting from localStorage, with db.appMeta fallback
+      const localSyncStr = localStorage.getItem('cloudSyncEnabled');
+      let isSyncEnabled = true;
+      if (localSyncStr !== null) {
+        isSyncEnabled = localSyncStr === 'true';
+      } else {
+        const syncObj = await db.appMeta.get('_sync');
+        isSyncEnabled = syncObj ? syncObj.value !== false : true;
+        localStorage.setItem('cloudSyncEnabled', isSyncEnabled ? 'true' : 'false');
       }
-    }
+      
+      set({ cloudSync: isSyncEnabled });
+      if (!isSyncEnabled && fireStore) {
+        try {
+          await safeDisableNetwork();
+          set({ isOnline: false });
+        } catch (err) {
+          console.warn('Failed to disable firestore network on init:', err);
+        }
+      }
 
     // 1. Seed Default User
     const defaultUser = await db.users.get('operator-1');
@@ -1691,6 +1699,7 @@ export const useStore = create<StoreState>((set, get) => ({
       return;
     }
     try {
+      localStorage.setItem('cloudSyncEnabled', enabled ? 'true' : 'false');
       if (enabled) {
         // Reset retry count on manual toggle
         syncRetryCount = 0;
@@ -1798,7 +1807,7 @@ export const useStore = create<StoreState>((set, get) => ({
               isLoading: false
             });
 
-            toast.success('Cloud sync enabled. Data restored from cloud.');
+            toast.success('Cloud synchronization enabled');
 
           } catch (fetchErr: any) {
             console.error('Failed to pull Firestore data during sync activation:', fetchErr);
@@ -1815,7 +1824,7 @@ export const useStore = create<StoreState>((set, get) => ({
           get().setupSync(user.uid);
           get().startKillSwitchListeners();
         } else {
-          toast.success('Cloud sync enabled');
+          toast.success('Cloud synchronization enabled');
         }
       } else {
         await safeDisableNetwork();
@@ -1824,7 +1833,7 @@ export const useStore = create<StoreState>((set, get) => ({
         // No listeners to stop since we use pure one-time fetches
         
         set({ cloudSync: false, isOnline: false });
-        toast.success('Cloud sync disabled. App running in local mode.');
+        toast.success('Switched to offline-only mode');
       }
     } catch (err) {
       console.error('Failed to change sync state:', err);

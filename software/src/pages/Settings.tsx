@@ -56,7 +56,7 @@ const SECTIONS = [
 ];
 
 // Section Components
-const SectionHeader = ({ label, icon: Icon, description }: { label: string, icon: any, description: string }) => (
+const SectionHeader = ({ label, icon: Icon, description, children }: { label: string, icon: any, description: string, children?: React.ReactNode }) => (
   <div className="mb-8">
     <div className="flex items-center gap-4 mb-2">
       <div className="p-3 bg-accent rounded-xl shadow-lg shadow-accent/20">
@@ -67,6 +67,7 @@ const SectionHeader = ({ label, icon: Icon, description }: { label: string, icon
     <p className="text-text-muted text-[13px] font-medium ml-1">
       {description}
     </p>
+    {children}
     <div className="h-px bg-border-light w-full mt-6" />
   </div>
 );
@@ -178,6 +179,22 @@ export default function Settings() {
 
   const [newCashierName, setNewCashierName] = useState('');
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
+  
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => {
+    const ts = localStorage.getItem('lastAutoBackupTimestamp');
+    return ts ? new Date(parseInt(ts)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+  });
+
+  useEffect(() => {
+    const handleBackupComplete = () => {
+      const ts = localStorage.getItem('lastAutoBackupTimestamp');
+      if (ts) {
+        setLastBackupTime(new Date(parseInt(ts)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      }
+    };
+    window.addEventListener('auto-backup-completed', handleBackupComplete);
+    return () => window.removeEventListener('auto-backup-completed', handleBackupComplete);
+  }, []);
 
   const calculateDaysRemaining = async () => {
     try {
@@ -389,7 +406,6 @@ export default function Settings() {
   const [restoreConfirmInput, setRestoreConfirmInput] = useState('');
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
-  const [clearLoading, setClearLoading] = useState(false);
 
   const handleManualBackup = async () => {
     try {
@@ -556,68 +572,6 @@ export default function Settings() {
       toast.error('Restore failed: ' + err.message);
     } finally {
       setRestoreLoading(false);
-    }
-  };
-
-  const handleClearAllData = async () => {
-    const electron = (window as any).electron;
-    let confirmed = false;
-
-    if (electron) {
-      const res = await electron.dialog.showMessageBox({
-        type: 'warning',
-        title: 'Clear All Data',
-        message: 'This will DELETE all data. Cannot undo.',
-        buttons: ['Cancel', 'Clear All Data'],
-        defaultId: 0
-      });
-      confirmed = res.response === 1;
-    } else {
-      confirmed = window.confirm('This will DELETE all data. Cannot undo. Are you sure you want to proceed?');
-    }
-    
-    if (!confirmed) {
-      return;  // User clicked Cancel
-    }
-    
-    try {
-      setClearLoading(true);
-      
-      // Clear all tables
-      const tables = [
-        'orders', 'orderItems', 'menuItems', 'categories',
-        'ingredients', 'recipes', 'settings', 'stockLog',
-        'expenses', 'dealItems', 'modifierGroups', 'appMeta'
-      ];
-      
-      for (const table of tables) {
-        if ((db as any)[table]) {
-          await (db as any)[table].clear();
-        }
-      }
-      
-      // Close database
-      await db.close();
-      
-      // Delete database completely
-      await indexedDB.deleteDatabase('rms_db');
-      await indexedDB.deleteDatabase('pos-app');
-      
-      toast.success('All data cleared. App will restart...');
-      
-      // Restart app after 2 seconds
-      setTimeout(() => {
-        if (electron) {
-          electron.ipcRenderer.send('restart-app');
-        } else {
-          window.location.reload();
-        }
-      }, 2000);
-      
-    } catch (err: any) {
-      toast.error('Clear failed: ' + err.message);
-    } finally {
-      setClearLoading(false);
     }
   };
 
@@ -1799,9 +1753,19 @@ export default function Settings() {
 
         {/* Section 6: DATA & BACKUP */}
         <section id="backup" className="bg-bg-surface rounded-xl border border-border-light p-8 md:p-12 shadow-sm scroll-mt-8">
-          <SectionHeader {...SECTIONS[6]} />
+          <SectionHeader {...SECTIONS[6]}>
+            <div className="flex flex-wrap items-center gap-2 mt-1 ml-1 text-[12px] font-semibold uppercase tracking-wider text-text-muted">
+              <span>Auto-backup saves every hour to device</span>
+              {lastBackupTime && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-green-500/10 text-green-500 border border-green-500/20 shadow-sm animate-pulse normal-case">
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                  Last auto-saved: {lastBackupTime}
+                </span>
+              )}
+            </div>
+          </SectionHeader>
           
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
             {/* Export Card */}
             <div className="bg-bg-surface-2 border border-border-light rounded-xl p-8 space-y-6 flex flex-col items-center text-center group transition-all hover:bg-bg-surface hover:shadow-md">
               <div className="w-16 h-16 bg-bg-surface border border-border-light rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
@@ -1978,55 +1942,38 @@ export default function Settings() {
                 Import Menu from menuSeed.json
               </button>
             </div>
-          </div>
 
-          {/* Data Management Section */}
-          <div className="mt-10 pt-10 border-t border-border-light space-y-4 text-left">
-            <h3 className="font-bold text-text-primary text-[16px] uppercase tracking-wider">Data Management</h3>
-            
-            <div className="bg-bg-surface-2 border border-border-light rounded-xl p-6 space-y-4 max-w-xl">
-              <div>
-                <p className="text-xs text-text-muted mb-2 uppercase tracking-wide font-medium">
-                  Auto-backup saves every hour to device
-                </p>
-                <button 
-                  onClick={handleManualBackup}
-                  disabled={backupLoading}
-                  className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
-                >
-                  {backupLoading ? 'Backing up...' : '💾 Backup Now'}
-                </button>
+            {/* Danger Zone Card */}
+            <div className="bg-bg-surface-2 border border-border-light rounded-xl p-8 space-y-6 flex flex-col items-center text-center group transition-all hover:bg-bg-surface hover:shadow-md">
+              <div className="w-16 h-16 bg-bg-surface border border-border-light rounded-xl flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <Trash2 className="w-8 h-8 text-danger" />
               </div>
-              
-              <div className="border-t border-border-light pt-3">
-                <p className="text-xs text-text-muted mb-2 uppercase tracking-wide font-medium">
-                  Restore data from a backup file
+              <div className="space-y-2">
+                <h3 className="text-[17px] font-bold text-text-primary tracking-tight uppercase">Danger Zone</h3>
+                <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight">
+                  COMPLETELY WIPE THE LOCAL DATABASE. THIS ACTION IS IRREVERSIBLE AND CANNOT BE UNDONE.
                 </p>
-                <button 
-                  onClick={handleRestoreBackup}
-                  disabled={restoreLoading}
-                  className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
-                >
-                  {restoreLoading ? 'Restoring...' : '📂 Restore Backup'}
-                </button>
               </div>
-              
-              <div className="border-t border-border-light pt-4">
-                <p className="text-xs text-red-500 mb-2 font-bold uppercase tracking-wide">
-                  ⚠️ Danger Zone - Cannot undo
+              <div className="bg-danger/5 border border-danger/10 rounded-lg p-4 flex items-start gap-4">
+                <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+                <p className="text-[10px] text-danger font-bold uppercase leading-tight text-left italic tracking-tight">
+                  This will completely clear your local database tables. This cannot be undone.
                 </p>
-                <button 
-                  onClick={handleClearAllData}
-                  disabled={clearLoading}
-                  className="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold uppercase text-[11px] tracking-widest transition-all disabled:opacity-50"
-                >
-                  {clearLoading ? 'Clearing...' : '🗑️ Clear All Data'}
-                </button>
               </div>
+              <button 
+                onClick={() => {
+                  setPasswordModalType('delete');
+                  setPasswordModalOpen(true);
+                }}
+                className="mt-4 btn-danger w-full py-4 text-[11px] tracking-widest shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 uppercase font-bold"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear All Data
+              </button>
             </div>
           </div>
 
-          {/* Cloud Sync & Delete All App Data */}
+          {/* Cloud Sync */}
           <div className="mt-10 pt-10 border-t border-border-light space-y-8 animate-fade-in">
              {/* Cloud Sync Toggle */}
              <div className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-bg-surface-2 rounded-xl border border-border-light gap-4 transition-all hover:bg-bg-surface hover:shadow-md">
@@ -2034,10 +1981,12 @@ export default function Settings() {
                  <div className="flex items-center gap-3">
                    <h4 className="text-[14px] font-bold text-text-primary uppercase tracking-tight">Cloud Sync</h4>
                    <span className={cn(
-                     "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
-                     cloudSync ? "bg-success/10 text-success" : "bg-text-disabled/15 text-text-muted"
+                     "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border",
+                     cloudSync 
+                       ? "bg-success/10 text-success border-success/20" 
+                       : "bg-red-500/10 text-red-500 border-red-500/20"
                    )}>
-                     {cloudSync ? 'Sync Enabled' : 'Sync Disabled'}
+                     {cloudSync ? 'SYNC ENABLED' : 'OFFLINE ONLY'}
                    </span>
                  </div>
                  <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight text-left">
@@ -2062,25 +2011,6 @@ export default function Settings() {
                    "w-4 h-4 rounded-full bg-white transition-all shadow-sm",
                    cloudSync ? "translate-x-6" : "translate-x-0"
                  )} />
-               </button>
-             </div>
-
-             {/* Delete All App Data */}
-             <div className="p-6 bg-danger/5 rounded-xl border border-danger/10 space-y-4 md:space-y-0 md:flex md:items-center md:justify-between transition-all hover:bg-danger/[0.08]">
-               <div className="space-y-1 text-left">
-                 <h4 className="text-[14px] font-bold text-danger uppercase tracking-tight">Delete All App Data</h4>
-                 <p className="text-[12px] font-medium text-text-muted leading-relaxed uppercase tracking-tight">
-                   Permanently deletes all orders, records, inventory and settings. Cannot be undone.
-                 </p>
-               </div>
-               <button
-                 onClick={() => {
-                   setPasswordModalType('delete');
-                   setPasswordModalOpen(true);
-                 }}
-                 className="btn-danger w-full md:w-auto px-6 py-3.5 text-[11px] tracking-widest shadow-lg shadow-danger/10 shrink-0 font-bold uppercase transition-all active:scale-95 cursor-pointer pointer-events-auto"
-               >
-                 Delete All App Data
                </button>
              </div>
           </div>

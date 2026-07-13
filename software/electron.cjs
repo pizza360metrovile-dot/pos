@@ -156,8 +156,11 @@ function createWindow() {
     });
   });
 
-  if (process.env.NODE_ENV === 'production') {
-    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+  // Fixed structural loading block to detect production deployments properly
+  if (app.isPackaged) {
+    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html')).catch((err) => {
+      console.error('Failed to load local index.html file:', err);
+    });
   } else {
     mainWindow.loadURL('http://localhost:3000');
   }

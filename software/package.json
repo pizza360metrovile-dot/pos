@@ -3,7 +3,7 @@
   "productName": "Saynz POS",
   "main": "electron.cjs",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.2",
   "type": "module",
   "description": "Saynz POS Desktop Application",
   "repository": {
