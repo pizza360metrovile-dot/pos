@@ -17,41 +17,35 @@ contextBridge.exposeInMainWorld('electron', {
     showMessageBox: (options) => ipcRenderer.invoke('dialog:showMessageBox', options),
   },
   fs: {
-    writeFileSync: async (filePath, data, options) => {
-      const res = await ipcRenderer.invoke('fs:writeFileSync', filePath, data, options);
+    writeFileSync: (filePath, data, options) => {
+      const res = ipcRenderer.sendSync('fs:writeFileSync', filePath, data, options);
       if (res && res.error) throw new Error(res.error);
       return res;
     },
-    readFileSync: async (filePath, options) => {
-      const res = await ipcRenderer.invoke('fs:readFileSync', filePath, options);
+    readFileSync: (filePath, options) => {
+      const res = ipcRenderer.sendSync('fs:readFileSync', filePath, options);
       if (res && res.error) throw new Error(res.error);
       return res;
     },
-    existsSync: async (filePath) => {
-      return await ipcRenderer.invoke('fs:existsSync', filePath);
-    },
-    mkdirSync: async (filePath, options) => {
-      const res = await ipcRenderer.invoke('fs:mkdirSync', filePath, options);
+    existsSync: (filePath) => ipcRenderer.sendSync('fs:existsSync', filePath),
+    mkdirSync: (filePath, options) => {
+      const res = ipcRenderer.sendSync('fs:mkdirSync', filePath, options);
       if (res && res.error) throw new Error(res.error);
       return res;
     },
-    readdirSync: async (filePath) => {
-      return await ipcRenderer.invoke('fs:readdirSync', filePath);
-    },
-    unlinkSync: async (filePath) => {
-      const res = await ipcRenderer.invoke('fs:unlinkSync', filePath);
+    readdirSync: (filePath) => ipcRenderer.sendSync('fs:readdirSync', filePath),
+    unlinkSync: (filePath) => {
+      const res = ipcRenderer.sendSync('fs:unlinkSync', filePath);
       if (res && res.error) throw new Error(res.error);
       return res;
     },
-    statSync: async (filePath) => {
-      return await ipcRenderer.invoke('fs:statSync', filePath);
-    },
+    statSync: (filePath) => ipcRenderer.sendSync('fs:statSync', filePath),
   },
   path: {
-    join: (...args) => ipcRenderer.sendSync('path:join', ...args), // Kept synchronous as it is an instantaneous string operation
+    join: (...args) => ipcRenderer.sendSync('path:join', ...args),
   },
   app: {
-    getPath: (name) => ipcRenderer.sendSync('app:getPath', name),   // Kept synchronous for instantaneous string bootstrapping
+    getPath: (name) => ipcRenderer.sendSync('app:getPath', name),
   }
 });
 

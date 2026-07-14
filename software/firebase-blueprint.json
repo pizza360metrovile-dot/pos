@@ -52,6 +52,22 @@
         "expiryDate",
         "updatedAt"
       ]
+    },
+    "Restaurant": {
+      "title": "Restaurant",
+      "description": "Represents the restaurant details and active licensing signature.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "license": {
+          "type": "object"
+        },
+        "licenseUpdatedAt": {
+          "type": "object"
+        }
+      }
     }
   },
   "firestore": {
@@ -62,6 +78,10 @@
     "/subscriptionSettings/{restaurantId}": {
       "schema": "SubscriptionSettings",
       "description": "Collection tracking POS license subscription settings."
+    },
+    "/restaurants/{restaurantId}": {
+      "schema": "Restaurant",
+      "description": "Collection tracking restaurant details and shared active licenses."
     }
   }
 }

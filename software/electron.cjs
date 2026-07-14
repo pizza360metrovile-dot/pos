@@ -3,15 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, session, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { autoUpdater } = require('electron-updater');
-const log = require('electron-log');
 
-// Configure the update logger for debugging
-autoUpdater.logger = log;
-autoUpdater.logger.transports.file.level = 'info';
+// Register custom scheme as secure so your built assets are allowed to load correctly
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      corsEnabled: true
+    }
+  }
+]);
 
 // Create backups directory if not exists
 app.whenReady().then(() => {
@@ -25,77 +33,77 @@ app.whenReady().then(() => {
   }
 });
 
-// IPC handlers for main process management
+// IPC handlers for main process
 ipcMain.on('restart-app', () => {
   app.relaunch();
   app.quit();
 });
 
-// Asynchronous Non-blocking Filesystem Handlers
-ipcMain.handle('fs:writeFileSync', async (event, filePath, data, options) => {
+// Safe sync FS handlers
+ipcMain.on('fs:writeFileSync', (event, filePath, data, options) => {
   try {
     fs.writeFileSync(filePath, data, options);
-    return true;
+    event.returnValue = true;
   } catch (err) {
-    return { error: err.message };
+    event.returnValue = { error: err.message };
   }
 });
 
-ipcMain.handle('fs:readFileSync', async (event, filePath, options) => {
+ipcMain.on('fs:readFileSync', (event, filePath, options) => {
   try {
-    return fs.readFileSync(filePath, options);
+    const data = fs.readFileSync(filePath, options);
+    event.returnValue = data;
   } catch (err) {
-    return { error: err.message };
+    event.returnValue = { error: err.message };
   }
 });
 
-ipcMain.handle('fs:existsSync', async (event, filePath) => {
+ipcMain.on('fs:existsSync', (event, filePath) => {
   try {
-    return fs.existsSync(filePath);
+    event.returnValue = fs.existsSync(filePath);
   } catch (err) {
-    return false;
+    event.returnValue = false;
   }
 });
 
-ipcMain.handle('fs:mkdirSync', async (event, filePath, options) => {
+ipcMain.on('fs:mkdirSync', (event, filePath, options) => {
   try {
     fs.mkdirSync(filePath, options);
-    return true;
+    event.returnValue = true;
   } catch (err) {
-    return { error: err.message };
+    event.returnValue = { error: err.message };
   }
 });
 
-ipcMain.handle('fs:readdirSync', async (event, filePath) => {
+ipcMain.on('fs:readdirSync', (event, filePath) => {
   try {
-    return fs.readdirSync(filePath);
+    event.returnValue = fs.readdirSync(filePath);
   } catch (err) {
-    return [];
+    event.returnValue = [];
   }
 });
 
-ipcMain.handle('fs:unlinkSync', async (event, filePath) => {
+ipcMain.on('fs:unlinkSync', (event, filePath) => {
   try {
     fs.unlinkSync(filePath);
-    return true;
+    event.returnValue = true;
   } catch (err) {
-    return { error: err.message };
+    event.returnValue = { error: err.message };
   }
 });
 
-ipcMain.handle('fs:statSync', async (event, filePath) => {
+ipcMain.on('fs:statSync', (event, filePath) => {
   try {
     const stats = fs.statSync(filePath);
-    return {
+    event.returnValue = {
       mtimeMs: stats.mtimeMs,
       birthtimeMs: stats.birthtimeMs,
     };
   } catch (err) {
-    return { mtimeMs: 0, birthtimeMs: 0 };
+    event.returnValue = { mtimeMs: 0, birthtimeMs: 0 };
   }
 });
 
-// Low-overhead string utility channels (safe to keep synchronous)
 ipcMain.on('path:join', (event, ...args) => {
   event.returnValue = path.join(...args);
 });
@@ -108,7 +116,7 @@ ipcMain.on('app:getPath', (event, name) => {
   }
 });
 
-// Async Window Dialog handlers
+// Async Dialog handlers
 ipcMain.handle('dialog:showSaveDialog', async (event, options) => {
   const win = BrowserWindow.getFocusedWindow();
   return await dialog.showSaveDialog(win, options);
@@ -129,7 +137,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'), // Securely matches the exact preload filename
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
@@ -156,11 +164,9 @@ function createWindow() {
     });
   });
 
-  // Fixed structural loading block to detect production deployments properly
+  // Use app.isPackaged to reliably load local assets in production
   if (app.isPackaged) {
-    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html')).catch((err) => {
-      console.error('Failed to load local index.html file:', err);
-    });
+    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
   } else {
     mainWindow.loadURL('http://localhost:3000');
   }
@@ -168,9 +174,6 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
-
-  // Check for updates automatically as soon as the app starts
-  autoUpdater.checkForUpdatesAndNotify();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -183,9 +186,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
-});
-
-// Force installation immediately once the file is fully downloaded in the background
-autoUpdater.on('update-downloaded', () => {
-  autoUpdater.quitAndInstall();
 });

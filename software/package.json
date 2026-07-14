@@ -3,13 +3,9 @@
   "productName": "Saynz POS",
   "main": "electron.cjs",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.0",
   "type": "module",
   "description": "Saynz POS Desktop Application",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/pizza360metrovile-dot/pos.git"
-  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
@@ -22,8 +18,7 @@
     "dist": "npm run build && electron-builder",
     "dist-win": "npm run build && electron-builder --win",
     "dist-mac": "npm run build && electron-builder --mac",
-    "dist-linux": "npm run build && electron-builder --linux",
-    "publish-win": "npm run build && electron-builder --win --publish always"
+    "dist-linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -34,8 +29,6 @@
     "dexie": "^4.4.2",
     "dexie-react-hooks": "^4.4.0",
     "dotenv": "^17.2.3",
-    "electron-log": "^5.4.4",
-    "electron-updater": "^6.3.0",
     "express": "^4.21.2",
     "firebase": "^12.13.0",
     "idb": "^8.0.3",
@@ -56,23 +49,17 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "cross-env": "^10.1.0",
-    "electron": "^30.5.1",
+    "electron": "^30.0.0",
     "electron-builder": "^24.13.3",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2"
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
   },
   "build": {
     "appId": "com.saynz.pos",
     "productName": "Saynz POS",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "pizza360metrovile-dot",
-        "repo": "pos"
-      }
-    ],
     "directories": {
       "output": "release"
     },

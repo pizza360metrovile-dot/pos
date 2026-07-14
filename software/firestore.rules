@@ -41,5 +41,16 @@ service cloud.firestore {
       allow create, update: if isValidId(restaurantId) && isValidSubscriptionSettings(request.resource.data) && request.resource.data.restaurantId == restaurantId;
       allow get: if isValidId(restaurantId);
     }
+
+    // Collection: restaurants
+    match /restaurants/{restaurantId} {
+      allow read, write: if isValidId(restaurantId);
+    }
+
+    // Collection: appControl
+    match /appControl/{document} {
+      allow read: if true;
+      allow write: if false;
+    }
   }
 }

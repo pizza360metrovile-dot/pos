@@ -211,6 +211,58 @@ let activeSyncUnsubscribers: (() => void)[] = [];
 let unsubscribeKillSwitch: (() => void) | null = null;
 let unsubscribeRestaurantKillSwitch: (() => void) | null = null;
 let licenseExpiryCheckInterval: any = null;
+let registeredUpdateOnlineStatus: any = null;
+let registeredUpdateActivity: any = null;
+let periodicNetworkCheckInterval: any = null;
+
+export function safeReload() {
+  if ((window as any).isRestarting) {
+    console.log('🔄 Reload/Restart already in progress, skipping redundant call.');
+    return;
+  }
+
+  // Rate limit check: max 2 reloads in 10 seconds.
+  try {
+    const now = Date.now();
+    const reloadHistoryStr = sessionStorage.getItem('safe_reload_history');
+    let reloads: number[] = [];
+    if (reloadHistoryStr) {
+      reloads = JSON.parse(reloadHistoryStr);
+    }
+    // Filter reloads within the last 10 seconds (10000 ms)
+    reloads = reloads.filter(time => now - time < 10000);
+    
+    if (reloads.length >= 2) {
+      console.error('🚫 Blocked infinite reload loop! safeReload() triggered too frequently (more than twice within 10s).');
+      alert('The application is experiencing multiple rapid reloads on startup. We have blocked an infinite reload loop to allow troubleshooting. Please check the browser console for details.');
+      return;
+    }
+    
+    reloads.push(now);
+    sessionStorage.setItem('safe_reload_history', JSON.stringify(reloads));
+  } catch (e) {
+    console.error('Failed to access sessionStorage for reload rate-limiting:', e);
+  }
+
+  (window as any).isRestarting = true;
+  console.log('🔄 Reloading application...');
+  window.location.reload();
+}
+
+export function safeRestartApp() {
+  if ((window as any).isRestarting) {
+    console.log('🔄 Reload/Restart already in progress, skipping redundant call.');
+    return;
+  }
+  (window as any).isRestarting = true;
+  console.log('🔄 Restarting application...');
+  const electron = (window as any).electron;
+  if (electron) {
+    electron.ipcRenderer.send('restart-app');
+  } else {
+    window.location.reload();
+  }
+}
 
 const parseId = (idStr: string): number | string => {
   const num = Number(idStr);
@@ -779,9 +831,14 @@ export const useStore = create<StoreState>((set, get) => ({
         try {
           await db.delete();
           await db.open();
-        } catch (resetErr) {
+        } catch (resetErr: any) {
           console.error('Critical failure resetting database:', resetErr);
+          alert(`Critical Error: Local database reset failed. Please clear your browser cache/storage and try again.\nDetails: ${resetErr?.message || resetErr}`);
+          throw resetErr;
         }
+      } else {
+        alert(`Failed to access local database (IndexedDB) on startup. This can happen if cookie/storage permissions are disabled, or if you are in a highly restricted private browsing window.\nDetails: ${openErr?.message || openErr}`);
+        throw openErr;
       }
     }
 
@@ -860,14 +917,22 @@ export const useStore = create<StoreState>((set, get) => ({
       });
     };
 
-    window.addEventListener('online', updateOnlineStatus);
-    window.addEventListener('offline', updateOnlineStatus);
+    if (registeredUpdateOnlineStatus) {
+      window.removeEventListener('online', registeredUpdateOnlineStatus);
+      window.removeEventListener('offline', registeredUpdateOnlineStatus);
+    }
+    registeredUpdateOnlineStatus = updateOnlineStatus;
+    window.addEventListener('online', registeredUpdateOnlineStatus);
+    window.addEventListener('offline', registeredUpdateOnlineStatus);
 
     // Run initial actual connectivity check on startup to bypass Electron native online checks false-negatives
     updateOnlineStatus();
 
     // Set a periodic 30s active network connection check to handle Electron false-positives/negatives robustly
-    const periodicNetworkCheck = setInterval(updateOnlineStatus, 30000);
+    if (periodicNetworkCheckInterval) {
+      clearInterval(periodicNetworkCheckInterval);
+    }
+    periodicNetworkCheckInterval = setInterval(updateOnlineStatus, 30000);
 
     // 4. Activity Tracking (8h timeout)
     const updateActivity = () => {
@@ -880,8 +945,13 @@ export const useStore = create<StoreState>((set, get) => ({
         set({ lastAction: now });
       }
     };
-    window.addEventListener('mousedown', updateActivity);
-    window.addEventListener('keydown', updateActivity);
+    if (registeredUpdateActivity) {
+      window.removeEventListener('mousedown', registeredUpdateActivity);
+      window.removeEventListener('keydown', registeredUpdateActivity);
+    }
+    registeredUpdateActivity = updateActivity;
+    window.addEventListener('mousedown', registeredUpdateActivity);
+    window.addEventListener('keydown', registeredUpdateActivity);
 
     // Initialize businessDayCutoff setting and run migration for older data
     await initializeBusinessDayCutoff();
@@ -998,8 +1068,39 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     }
 
+    // 1. Audit check: Load settings from IndexedDB, fallback to localStorage, fallback to DEFAULT_SETTINGS
     const settingsEntry = await db.settings.where({ key: 'main' }).first();
-    const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+    let localSettingsObj = null;
+    const localSettingsStr = localStorage.getItem('restaurant_settings');
+    if (localSettingsStr) {
+      try {
+        localSettingsObj = JSON.parse(localSettingsStr);
+      } catch (e) {
+        console.warn('Failed to parse restaurant_settings from localStorage on init:', e);
+      }
+    }
+
+    const settings = settingsEntry ? settingsEntry.value : (localSettingsObj || DEFAULT_SETTINGS);
+
+    // Sync settings if they are in localStorage but not in IndexedDB, or vice versa
+    if (settings) {
+      if (!settingsEntry) {
+        try {
+          await db.settings.add({ key: 'main', value: settings });
+          console.log('Synchronized settings: Restored settings to IndexedDB from localStorage');
+        } catch (e) {
+          console.warn('Failed to add main settings to IndexedDB on startup:', e);
+        }
+      }
+      if (!localSettingsStr) {
+        try {
+          localStorage.setItem('restaurant_settings', JSON.stringify(settings));
+          console.log('Synchronized settings: Restored settings to localStorage from IndexedDB');
+        } catch (e) {
+          console.warn('Failed to save settings to localStorage on startup:', e);
+        }
+      }
+    }
 
     // Clear any temporary 'in-progress' orders from previous sessions to prevent persistence
     try {
@@ -1155,7 +1256,7 @@ export const useStore = create<StoreState>((set, get) => ({
         const expiresAtVal = Number(record?.value);
         if (expiresAtVal && expiresAtVal <= Date.now()) {
           // License just expired while app was open
-          window.location.reload();
+          safeReload();
           // Reload triggers launch check 
           // which shows hard stop screen
         }
@@ -1359,10 +1460,21 @@ export const useStore = create<StoreState>((set, get) => ({
     const sidebarState = sidebarEntry ? sidebarEntry.value : 'expanded';
 
     // Seed initial data if empty and not logged in (to have SOMETHING to show)
-    if (categories.length === 0 && !get().user) {
+    // ONLY apply default fallback settings if the local storage tables are completely empty
+    const initialCategoriesCount = await db.categories.count();
+    const initialMenuItemsCount = await db.menuItems.count();
+    const settingsCount = await db.settings.count();
+    const isDbCompletelyEmpty = initialCategoriesCount === 0 && initialMenuItemsCount === 0 && settingsCount === 0 && !localStorage.getItem('restaurant_settings');
+
+    if (isDbCompletelyEmpty && !get().user) {
       await db.categories.bulkAdd(SEED_CATEGORIES);
       await db.menuItems.bulkAdd(SEED_MENU_ITEMS);
       await db.settings.add({ key: 'main', value: DEFAULT_SETTINGS });
+      try {
+        localStorage.setItem('restaurant_settings', JSON.stringify(DEFAULT_SETTINGS));
+      } catch (e) {
+        console.warn('Failed to save settings to localStorage on seeding:', e);
+      }
       
       const newCats = await db.categories.toArray();
       const newItems = await db.menuItems.toArray();
@@ -1435,9 +1547,10 @@ export const useStore = create<StoreState>((set, get) => ({
       });
     }
 
-    } catch (initErr) {
+    } catch (initErr: any) {
       console.error('Unhandled Dexie or state initialization error inside init():', initErr);
       set({ isLoading: false });
+      alert(`System Initialization Error: The local database or storage could not be opened/initialized. This might happen due to browser security policies or disk space limits.\n\nError details: ${initErr?.message || initErr}`);
     }
   },
 
@@ -1572,7 +1685,16 @@ export const useStore = create<StoreState>((set, get) => ({
         const categories = await db.categories.toArray();
         const menuItems = await db.menuItems.toArray();
         const settingsEntry = await db.settings.where({ key: 'main' }).first();
-        const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+        let localSettingsObj = null;
+        const localSettingsStr = localStorage.getItem('restaurant_settings');
+        if (localSettingsStr) {
+          try {
+            localSettingsObj = JSON.parse(localSettingsStr);
+          } catch (e) {
+            console.warn('Failed to parse settings from localStorage:', e);
+          }
+        }
+        const settings = settingsEntry ? settingsEntry.value : (localSettingsObj || DEFAULT_SETTINGS);
         const orders = await db.orders.orderBy('createdAt').reverse().toArray();
         const ingredients = await db.ingredients.toArray();
         const recipes = await db.recipes.toArray();
@@ -1633,7 +1755,16 @@ export const useStore = create<StoreState>((set, get) => ({
         const categories = await db.categories.toArray();
         const menuItems = await db.menuItems.toArray();
         const settingsEntry = await db.settings.where({ key: 'main' }).first();
-        const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+        let localSettingsObj = null;
+        const localSettingsStr = localStorage.getItem('restaurant_settings');
+        if (localSettingsStr) {
+          try {
+            localSettingsObj = JSON.parse(localSettingsStr);
+          } catch (e) {
+            console.warn('Failed to parse settings from localStorage:', e);
+          }
+        }
+        const settings = settingsEntry ? settingsEntry.value : (localSettingsObj || DEFAULT_SETTINGS);
         const orders = await db.orders.orderBy('createdAt').reverse().toArray();
         const ingredients = await db.ingredients.toArray();
         const recipes = await db.recipes.toArray();
@@ -1770,7 +1901,16 @@ export const useStore = create<StoreState>((set, get) => ({
             const categories = await db.categories.toArray();
             const menuItems = await db.menuItems.toArray();
             const settingsEntry = await db.settings.where({ key: 'main' }).first();
-            const settings = settingsEntry ? settingsEntry.value : DEFAULT_SETTINGS;
+            let localSettingsObj = null;
+            const localSettingsStr = localStorage.getItem('restaurant_settings');
+            if (localSettingsStr) {
+              try {
+                localSettingsObj = JSON.parse(localSettingsStr);
+              } catch (e) {
+                console.warn('Failed to parse settings from localStorage:', e);
+              }
+            }
+            const settings = settingsEntry ? settingsEntry.value : (localSettingsObj || DEFAULT_SETTINGS);
             const orders = await db.orders.orderBy('createdAt').reverse().toArray();
             const ingredients = await db.ingredients.toArray();
             const recipes = await db.recipes.toArray();
@@ -2521,6 +2661,12 @@ export const useStore = create<StoreState>((set, get) => ({
     } else {
       await db.settings.add({ key: 'main', value: settings });
     }
+    // Backup settings in localStorage completely outside the build directory
+    try {
+      localStorage.setItem('restaurant_settings', JSON.stringify(settings));
+    } catch (e) {
+      console.warn('Failed to save settings to localStorage:', e);
+    }
     const { user } = get();
     if (user && fireStore) {
       await setDoc(doc(fireStore, 'restaurants', user.uid), settings);
@@ -2960,6 +3106,11 @@ export const useStore = create<StoreState>((set, get) => ({
           
           await db.settings.clear();
           await db.settings.add({ key: 'main', value: DEFAULT_SETTINGS });
+          try {
+            localStorage.setItem('restaurant_settings', JSON.stringify(DEFAULT_SETTINGS));
+          } catch (e) {
+            console.warn('Failed to reset restaurant_settings in localStorage:', e);
+          }
         });
 
         // Reset Zustand store state (Keep menu items, categories, modifiers, appMeta, user session)
@@ -2977,7 +3128,7 @@ export const useStore = create<StoreState>((set, get) => ({
         });
 
         toast.success('All data deleted successfully');
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => safeReload(), 1500);
 
       } else {
         // Delete EVERYTHING except appMeta
@@ -3008,6 +3159,11 @@ export const useStore = create<StoreState>((set, get) => ({
 
           await db.settings.clear();
           await db.settings.add({ key: 'main', value: DEFAULT_SETTINGS });
+          try {
+            localStorage.setItem('restaurant_settings', JSON.stringify(DEFAULT_SETTINGS));
+          } catch (e) {
+            console.warn('Failed to reset restaurant_settings in localStorage:', e);
+          }
         });
 
         // Reset Zustand store state completely
@@ -3033,7 +3189,7 @@ export const useStore = create<StoreState>((set, get) => ({
         });
 
         toast.success('All data deleted successfully');
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => safeReload(), 1500);
       }
     } catch (err) {
       console.error('Failed to delete all app data:', err);
