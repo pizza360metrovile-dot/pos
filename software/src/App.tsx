@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Toaster } from 'sonner';
-import { useStore } from './store/useStore';
+import { useStore, safeReload } from './store/useStore';
 import { checkActualConnection } from './utils/network';
 import { format } from 'date-fns';
 import { ShutdownScreen, MaintenanceScreen } from './components/KillSwitchScreens';
@@ -45,6 +45,8 @@ import LicenseModal from './components/LicenseModal';
 import { checkDeviceLicense } from './services/licenseService';
 import { db } from './lib/db';
 import { verifyLicenseWithBackend, getRestaurantId as getConfigRestaurantId, getRestaurantInfo as getConfigRestaurantInfo } from './utils/licenseValidator';
+
+declare const __APP_VERSION__: string;
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -246,7 +248,7 @@ const Sidebar = ({
               </div>
               <div className="flex-1 min-w-0">
                  <p className="text-[10px] font-bold text-white truncate uppercase tracking-tight">{user?.email?.split('@')[0] || 'Operator'}</p>
-                 <p className="text-[8px] text-text-sidebar opacity-50 font-mono font-bold uppercase tracking-widest leading-none mt-1">V.2.4.0-STABLE</p>
+                 <p className="text-[8px] text-text-sidebar opacity-50 font-mono font-bold uppercase tracking-widest leading-none mt-1">{`V.${__APP_VERSION__}-STABLE`}</p>
               </div>
             </div>
             <button 
@@ -657,9 +659,16 @@ export default function App() {
   }, [init]);
 
   useEffect(() => {
+    let cleanupFn: (() => void) | null = null;
     import('./services/backgroundSyncWorker').then(({ startBackgroundSync }) => {
-      startBackgroundSync();
+      cleanupFn = startBackgroundSync();
     }).catch(err => console.warn('Failed to start background sync worker:', err));
+
+    return () => {
+      if (cleanupFn) {
+        cleanupFn();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -908,7 +917,7 @@ export default function App() {
               if (user) {
                 setupSync(user.uid);
               } else {
-                window.location.reload();
+                safeReload();
               }
             }}
             className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-1.5 px-3 rounded-lg text-xs transition-colors duration-150 flex items-center justify-center gap-1.5 shadow-sm"

@@ -93,6 +93,7 @@ interface StoreState {
 
   // Actions
   init: () => Promise<void>;
+  rehydrateFromDexie: () => Promise<void>;
   setSidebarState: (state: 'expanded' | 'collapsed') => Promise<void>;
   login: (email: string, password: string, remember: boolean) => Promise<void>;
   logout: () => Promise<void>;
@@ -736,6 +737,7 @@ async function deductInventoryOnRestore(order: Order, get: () => any) {
 
 let syncRetryCount = 0;
 let syncRetryTimeout: any = null;
+let setupSyncInProgress = false;
 const MAX_RETRIES = 3;
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -1554,6 +1556,73 @@ export const useStore = create<StoreState>((set, get) => ({
     }
   },
 
+  rehydrateFromDexie: async () => {
+    try {
+      const categories = await db.categories.toArray();
+      const menuItems = await db.menuItems.toArray();
+      const dealItems = await db.dealItems.toArray();
+      const dealOrderComponents = await db.dealOrderComponents.toArray();
+      const expenses = await db.expenses.orderBy('date').reverse().toArray();
+      const expenseCategories = await db.expenseCategories.toArray();
+      const orders = await db.orders.orderBy('createdAt').reverse().toArray();
+      const ingredients = await db.ingredients.toArray();
+      const recipes = await db.recipes.toArray();
+      const recipeItems = await db.recipeItems.toArray();
+      const stockLogs = await db.stockLog.orderBy('createdAt').reverse().toArray();
+      const kotSnapshots = await db.kotSnapshots.toArray();
+      const modifierGroups = await db.modifierGroups.toArray();
+      const modifierOptions = await db.modifierOptions.toArray();
+      const cashiers = await db.cashiers.toArray();
+
+      const activeCashierRecord = await db.appMeta.get('_activeCashier');
+      const activeCashierName = activeCashierRecord ? activeCashierRecord.value : null;
+
+      const sidebarEntry = await db.settings.where({ key: 'sidebarState' }).first();
+      const sidebarState = sidebarEntry ? sidebarEntry.value : 'expanded';
+
+      const settingsEntry = await db.settings.where({ key: 'main' }).first();
+      let localSettingsObj = null;
+      const localSettingsStr = localStorage.getItem('restaurant_settings');
+      if (localSettingsStr) {
+        try {
+          localSettingsObj = JSON.parse(localSettingsStr);
+        } catch (e) {
+          console.warn('rehydrateFromDexie: Failed to parse settings from localStorage:', e);
+        }
+      }
+      const settings = settingsEntry ? settingsEntry.value : (localSettingsObj || DEFAULT_SETTINGS);
+
+      const sub = await db.settings.where({ key: 'subscriptionSettings' }).first();
+      const subscription = sub ? sub.value : null;
+
+      set({
+        categories,
+        menuItems,
+        dealItems,
+        dealOrderComponents,
+        expenses,
+        expenseCategories,
+        orders,
+        ingredients,
+        recipes,
+        recipeItems,
+        stockLogs,
+        kotSnapshots,
+        modifierGroups,
+        modifierOptions,
+        cashiers,
+        activeCashierName,
+        sidebarState,
+        subscription,
+        settings: { ...settings, licenseExpiry: subscription?.expiryDate },
+        isLoading: false
+      });
+      console.log('✨ Silent rehydrate complete: Zustand store successfully re-hydrated from Dexie.');
+    } catch (err) {
+      console.error('Failed to silently rehydrate Zustand store from Dexie:', err);
+    }
+  },
+
   setSidebarState: async (sidebarState) => {
     const existing = await db.settings.where({ key: 'sidebarState' }).first();
     if (existing) {
@@ -1569,6 +1638,23 @@ export const useStore = create<StoreState>((set, get) => ({
       console.log('Firebase sync is disabled (missing or invalid configuration).');
       return;
     }
+
+    if (setupSyncInProgress) {
+      console.log('⏳ setupSync is already in progress, skipping redundant startup sync.');
+      return;
+    }
+
+    try {
+      const { isBackgroundSyncInProgress } = await import('../services/backgroundSyncWorker');
+      if (isBackgroundSyncInProgress()) {
+        console.log('⏳ Background sync is already active. Skipping setupSync to prevent interruption or loop.');
+        return;
+      }
+    } catch (e) {
+      console.warn('Could not check background sync status:', e);
+    }
+
+    setupSyncInProgress = true;
 
     const { doc, getDoc, getDocs, collection, query, where } = await import('firebase/firestore');
 
@@ -1738,7 +1824,9 @@ export const useStore = create<StoreState>((set, get) => ({
         localStorage.setItem('lastSyncTimestamp', String(Date.now()));
       }
 
+      setupSyncInProgress = false;
     } catch (err: any) {
+      setupSyncInProgress = false;
       console.warn('Initial sync check / migration failed or ran offline:', err.message || err);
       
       if (err.message?.toLowerCase().includes('offline') || err.code === 'unavailable' || err.message?.toLowerCase().includes('timeout')) {
@@ -1750,7 +1838,7 @@ export const useStore = create<StoreState>((set, get) => ({
         }
       }
 
-      // Load local cached data immediately so app is functional even if Firestore sync fails / is retrying
+      // Load local cached data immediately so app is functional even if Firestore sync fails
       try {
         const categories = await db.categories.toArray();
         const menuItems = await db.menuItems.toArray();
@@ -1797,26 +1885,15 @@ export const useStore = create<StoreState>((set, get) => ({
           expenseCategories,
           cashiers: d_cashiers,
           isLoading: false, // Dismiss loading spinner immediately!
-          syncError: 'Sync failed, using cached data' // Error banner
+          syncError: 'Offline: using cached data' // Error banner
         });
+        console.log('✅ Local cached data loaded successfully during setupSync fallback.');
       } catch (hydrateErr) {
         console.error('Failed to load local cached data during setupSync fallback:', hydrateErr);
         set({ isLoading: false });
       }
 
-      if (syncRetryCount >= MAX_RETRIES) {
-        console.warn('setupSync: Max retries reached, running in local offline mode');
-        return; // STOP - Don't retry, run completely in local offline mode
-      }
-
-      syncRetryCount++;
-      const delayMs = Math.min(1000 * Math.pow(2, syncRetryCount), 10000);
-      console.warn(`setupSync retry ${syncRetryCount}/${MAX_RETRIES} in ${delayMs}ms`);
-
-      if (syncRetryTimeout) clearTimeout(syncRetryTimeout);
-      syncRetryTimeout = setTimeout(() => {
-        get().setupSync(uid);
-      }, delayMs);
+      console.warn('setupSync: Automatic retries disabled. Running completely in local offline mode.');
     }
   },
 

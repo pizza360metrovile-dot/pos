@@ -3,9 +3,14 @@
   "productName": "Saynz POS",
   "main": "electron.cjs",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Saynz POS Desktop Application",
+  "author": "Pizza360 Metrovile <pizza360metrovile@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pizza360metrovile-dot/pos.git"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
@@ -29,6 +34,7 @@
     "dexie": "^4.4.2",
     "dexie-react-hooks": "^4.4.0",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.8.9",
     "express": "^4.21.2",
     "firebase": "^12.13.0",
     "idb": "^8.0.3",

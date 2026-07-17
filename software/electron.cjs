@@ -6,6 +6,7 @@
 const { app, BrowserWindow, session, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
 
 // Register custom scheme as secure so your built assets are allowed to load correctly
 protocol.registerSchemesAsPrivileged([
@@ -51,7 +52,7 @@ ipcMain.on('fs:writeFileSync', (event, filePath, data, options) => {
 
 ipcMain.on('fs:readFileSync', (event, filePath, options) => {
   try {
-    const data = fs.readFileSync(filePath, options);
+    fs.readFileSync(filePath, options);
     event.returnValue = data;
   } catch (err) {
     event.returnValue = { error: err.message };
@@ -170,6 +171,45 @@ function createWindow() {
   } else {
     mainWindow.loadURL('http://localhost:3000');
   }
+
+  // Set up auto-updater events once the window is initialized
+  setupAutoUpdater(mainWindow);
+}
+
+function setupAutoUpdater(mainWindow) {
+  // Guard against running auto-updater in local development mode
+  if (!app.isPackaged) return;
+
+  // Configure update checks
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  // Check on app launch
+  autoUpdater.checkForUpdatesAndNotify();
+
+  // Check for updates periodically (every 10 minutes)
+  setInterval(() => {
+    autoUpdater.checkForUpdatesAndNotify();
+  }, 10 * 60 * 1000);
+
+  // When update is ready, ask user to restart
+  autoUpdater.on('update-downloaded', () => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: 'A new version has been downloaded. Restart the app to apply the update?',
+      buttons: ['Restart Now', 'Later']
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  // Optional: Log errors if updates fail
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-updater error:', err);
+  });
 }
 
 app.whenReady().then(() => {

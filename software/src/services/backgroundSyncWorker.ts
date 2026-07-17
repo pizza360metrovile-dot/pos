@@ -18,6 +18,11 @@ import { useStore } from '../store/useStore';
 
 const SYNC_INTERVAL = 60000; // 60 seconds
 let syncInProgress = false;
+let syncIntervalId: any = null;
+
+export function isBackgroundSyncInProgress(): boolean {
+  return syncInProgress;
+}
 
 async function getLastSyncedAtForTable(tableName: string): Promise<number> {
   try {
@@ -69,16 +74,37 @@ function isNetworkError(err: any): boolean {
   );
 }
 
-export async function startBackgroundSync() {
+export function startBackgroundSync(): () => void {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+  }
+
   console.log('🔄 Background sync worker started (60 sec interval)');
   
   // Run sync immediately on start
-  await performSync();
+  performSync().catch(err => console.error('Initial background sync failed:', err));
   
   // Then run every 60 seconds
-  setInterval(() => {
-    performSync();
+  syncIntervalId = setInterval(() => {
+    performSync().catch(err => console.error('Interval background sync failed:', err));
   }, SYNC_INTERVAL);
+
+  return () => {
+    if (syncIntervalId) {
+      clearInterval(syncIntervalId);
+      syncIntervalId = null;
+      console.log('🛑 Background sync worker interval cleared');
+    }
+  };
+}
+
+export function stopBackgroundSync() {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+    console.log('🛑 Background sync worker stopped');
+  }
 }
 
 export async function performSync() {
@@ -105,7 +131,11 @@ export async function performSync() {
     // PHASE 3: Re-hydrate state if there were remote changes
     if (hasChanges) {
       console.log('🔄 Remote changes detected, re-hydrating Zustand store...');
-      await state.init();
+      if (typeof state.rehydrateFromDexie === 'function') {
+        await state.rehydrateFromDexie();
+      } else {
+        await state.init();
+      }
     }
     
     console.log('✅ Sync cycle completed');
